@@ -1,0 +1,15 @@
+# Go build outputs
+bin/
+dist/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Local/editor files
+.idea/
+.vscode/
+*.swp
+
+# Skawld runtime state
+.skawld/

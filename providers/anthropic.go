@@ -45,9 +45,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req core.ProviderRequest
 		}
 		payload := map[string]interface{}{
 			"model":      req.Model,
-			"system":     req.System,
+			"system":     anthropicSystem(req.System, req.CachePrompt, req.CacheTTL),
 			"tools":      anthropicTools(req.Tools),
-			"messages":   req.Messages,
+			"messages":   anthropicMessages(req.Messages),
 			"max_tokens": maxTokens,
 			"stream":     true,
 		}
@@ -132,4 +132,67 @@ func anthropicTools(tools []core.ToolSchema) []map[string]interface{} {
 		out = append(out, map[string]interface{}{"name": t.Name, "description": t.Description, "input_schema": t.InputSchema})
 	}
 	return out
+}
+
+func anthropicSystem(system []core.SystemBlock, cachePrompt bool, cacheTTL string) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(system))
+	for _, block := range system {
+		wire := map[string]interface{}{"type": "text", "text": block.Text}
+		if cachePrompt && block.Cacheable {
+			cacheControl := map[string]interface{}{"type": "ephemeral"}
+			if cacheTTL != "" {
+				cacheControl["ttl"] = cacheTTL
+			}
+			wire["cache_control"] = cacheControl
+		}
+		out = append(out, wire)
+	}
+	return out
+}
+
+func anthropicMessages(messages []core.Message) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(messages))
+	for _, msg := range messages {
+		content := make([]map[string]interface{}, 0, len(msg.Content))
+		for _, block := range msg.Content {
+			switch block.Type {
+			case core.BlockText:
+				content = append(content, map[string]interface{}{"type": "text", "text": block.Text})
+			case core.BlockThinking:
+				wire := map[string]interface{}{"type": "thinking", "thinking": block.Thinking}
+				if block.Signature != "" {
+					wire["signature"] = block.Signature
+				}
+				content = append(content, wire)
+			case core.BlockToolUse:
+				content = append(content, map[string]interface{}{"type": "tool_use", "id": block.ID, "name": block.Name, "input": block.Input})
+			case core.BlockToolResult:
+				wire := map[string]interface{}{"type": "tool_result", "tool_use_id": block.ToolUseID, "content": block.StringContent()}
+				if block.IsError {
+					wire["is_error"] = true
+				}
+				content = append(content, wire)
+			case core.BlockImage:
+				if block.Source != nil {
+					content = append(content, map[string]interface{}{"type": "image", "source": anthropicImageSource(*block.Source)})
+				}
+			}
+		}
+		out = append(out, map[string]interface{}{"role": msg.Role, "content": content})
+	}
+	return out
+}
+
+func anthropicImageSource(source core.ImageSource) map[string]interface{} {
+	wire := map[string]interface{}{"type": source.Type}
+	if source.MediaType != "" {
+		wire["media_type"] = source.MediaType
+	}
+	if source.Data != "" {
+		wire["data"] = source.Data
+	}
+	if source.URL != "" {
+		wire["url"] = source.URL
+	}
+	return wire
 }

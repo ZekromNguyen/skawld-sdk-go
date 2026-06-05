@@ -89,26 +89,26 @@ For phased Scrum-style delivery planning, see [`SCRUM_PLAN.md`](./SCRUM_PLAN.md)
   - [x] stored messages with monotonic sequence
   - [x] task persistence for the current process
   - [x] invoked-skill record storage API
-- [ ] Implement SQLite session store:
-  - [ ] session records
-  - [ ] stored messages with monotonic sequence
-  - [ ] task persistence
-  - [ ] task dependency edges
-  - [ ] invoked-skill persistence
-  - [ ] close/reopen behavior
-- [ ] Add persistence/resume tests matching TypeScript behavior.
-- [ ] Add migration-safe schema initialization.
+- [x] Implement SQLite session store:
+  - [x] session records
+  - [x] stored messages with monotonic sequence
+  - [x] task persistence
+  - [x] task dependency edges
+  - [x] invoked-skill persistence
+  - [x] close/reopen behavior
+- [x] Add persistence/resume tests matching TypeScript behavior.
+- [x] Add migration-safe schema initialization.
 
 ## Permissions
 
-- [ ] Match TypeScript rule semantics exactly:
+- [x] Match TypeScript rule semantics exactly:
   - [x] default, `acceptEdits`, and `yolo` mode defaults
   - [x] basic tool rules
   - [x] basic path rules
   - [x] bash command rules
   - [x] named tool argument rules
-  - [ ] complete tool argument rules
-  - [ ] rule ordering and precedence
+  - [x] complete tool argument rules
+  - [x] rule ordering and precedence
 - [x] Add input rewriting tests for `CanUseTool`.
 - [x] Add validation for invalid permission callback responses.
 - [x] Emit `permission_request` events before callback execution.
@@ -180,22 +180,22 @@ For phased Scrum-style delivery planning, see [`SCRUM_PLAN.md`](./SCRUM_PLAN.md)
 
 - [x] Port core loop tests.
 - [x] Port scheduler tests.
-- [ ] Port provider translation tests.
+- [x] Port provider translation tests.
 - [ ] Port permissions tests:
   - [x] permission modes
   - [x] basic tool, path, bash, and named-argument rules
   - [x] callback validation and input rewriting
   - [x] permission-request batching
-  - [ ] full TypeScript parity fixture coverage
+  - [x] full TypeScript parity fixture coverage
 - [ ] Port tool tests:
   - [x] filesystem tools
   - [x] `Glob`
   - [x] `Grep`
   - [x] `Bash`
   - [x] task tools
-- [ ] Port session store tests:
+- [x] Port session store tests:
   - [x] in-memory task storage behavior
-  - [ ] full persistence/resume parity
+  - [x] full persistence/resume parity
 - [ ] Port MCP tests.
 - [ ] Port skills and subagent tests.
 - [x] Add public API/surface test.

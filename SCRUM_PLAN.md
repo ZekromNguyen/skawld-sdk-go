@@ -103,33 +103,33 @@ Goal: make safety decisions and persisted state match the original SDK.
 
 Implementation tasks:
 
-- [ ] Match TypeScript permission rule semantics exactly.
+- [x] Match TypeScript permission rule semantics exactly.
 - [x] Implement permission mode defaults for `default`, `acceptEdits`, and `yolo`.
 - [x] Implement basic tool and path rules.
 - [x] Implement bash command rules.
 - [x] Implement named tool argument rules.
-- [ ] Implement path rule matching and ordering parity.
+- [x] Implement path rule matching and ordering parity.
 - [x] Implement permission-request batching before callback execution.
 - [x] Validate invalid permission callback responses.
-- [ ] Implement SQLite-backed `SessionStore`.
-- [ ] Persist sessions, messages, tasks, task edges, and invoked skills.
-- [ ] Add schema initialization and migration-safe open behavior.
+- [x] Implement SQLite-backed `SessionStore`.
+- [x] Persist sessions, messages, tasks, task edges, and invoked skills.
+- [x] Add schema initialization and migration-safe open behavior.
 
 Testing tasks:
 
 - [x] Add permission engine tests for modes, tool/path/bash rules, callback validation, and input rewrites.
 - [x] Add input rewrite tests for `CanUseTool`.
 - [ ] Port memory session tests.
-- [ ] Add SQLite session tests.
-- [ ] Add persistence/resume integration tests.
+- [x] Add SQLite session tests.
+- [x] Add persistence/resume integration tests.
 - [x] Add in-memory task dependency tests.
 
 Acceptance criteria:
 
 - [x] Default, `acceptEdits`, and `yolo` modes have Go implementations.
 - [x] Permission prompts are emitted and batched before callbacks run.
-- [ ] Permission rule behavior is verified against TypeScript.
-- [ ] SQLite sessions can be closed, reopened, resumed, and listed.
+- [x] Permission rule behavior is verified against TypeScript.
+- [x] SQLite sessions can be closed, reopened, resumed, and listed.
 
 ## Phase 4: Provider Parity
 
@@ -151,7 +151,7 @@ Implementation tasks:
 
 Testing tasks:
 
-- [ ] Port provider translation tests.
+- [x] Port provider translation tests.
 - [ ] Add fake HTTP/SSE server tests for Anthropic.
 - [ ] Add fake HTTP/SSE server tests for OpenAI Chat.
 - [ ] Add fake HTTP/SSE server tests for OpenAI Responses.
@@ -326,14 +326,14 @@ Sprint 3:
 
 - [x] Phase 2 search/bash tools
 - [x] Phase 2 task dependency/metadata tools
-- [ ] Phase 3 permissions parity
+- [x] Phase 3 permissions parity
   - [x] Permission modes, bash rules, named argument rules, input rewrites, callback validation, and request batching
-  - [ ] Exact TypeScript path/rule precedence parity and full permission test port
+  - [x] Exact TypeScript path/rule precedence parity and full permission test port
 
 Sprint 4:
 
-- [ ] Phase 3 SQLite sessions
-- [ ] Phase 4 provider translation tests
+- [x] Phase 3 SQLite sessions
+- [x] Phase 4 provider translation tests
 
 Sprint 5:
 

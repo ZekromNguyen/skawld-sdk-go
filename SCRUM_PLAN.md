@@ -360,7 +360,7 @@ work. It continues after the completed migration plan and keeps the same
 Scrum-aligned structure: implementation tasks, testing tasks, and acceptance
 criteria for each increment.
 
-Status created from the production audit backlog on 2026-06-06.
+Status updated after Sprint 10 implementation on 2026-06-06.
 
 ## Phase 10: Run Lifecycle And Provider Stream Safety
 
@@ -412,41 +412,44 @@ under cancellation and concurrency.
 
 Implementation tasks:
 
-- [ ] Replace scanner-based SSE parsing with a shared bounded reader-based SSE
+- [x] Replace scanner-based SSE parsing with a shared bounded reader-based SSE
       parser.
-- [ ] Use the shared SSE parser in provider streaming and MCP HTTP streaming.
-- [ ] Add explicit maximum SSE event size and clear oversized-event errors.
-- [ ] Add injectable `HTTPDoer` or `*http.Client` options for providers.
-- [ ] Add injectable and timeout-aware HTTP client options for MCP HTTP
+- [x] Use the shared SSE parser in provider streaming and MCP HTTP streaming.
+- [x] Add explicit maximum SSE event size and clear oversized-event errors.
+- [x] Add injectable `HTTPDoer` or `*http.Client` options for providers.
+- [x] Add injectable and timeout-aware HTTP client options for MCP HTTP
       transports.
-- [ ] Replace per-call provider HTTP clients with a shared default client and
+- [x] Replace per-call provider HTTP clients with a shared default client and
       tuned transport.
-- [ ] Make MCP request IDs concurrency-safe with `atomic.Int64` or a mutex.
-- [ ] Protect MCP HTTP `sessionID` reads and writes with synchronization.
-- [ ] Redesign MCP stdio transport around a read loop and response
+- [x] Make MCP request IDs concurrency-safe with `atomic.Int64` or a mutex.
+- [x] Protect MCP HTTP `sessionID` reads and writes with synchronization.
+- [x] Redesign MCP stdio transport around a read loop and response
       demultiplexer.
-- [ ] Ensure canceled MCP stdio requests cannot block forever in
+- [x] Ensure canceled MCP stdio requests cannot block forever in
       `json.Decoder.Decode`.
-- [ ] Change `BashTool.Execute` so timeout and cancellation wait for process
+- [x] Change `BashTool.Execute` so timeout and cancellation wait for process
       cleanup before returning.
-- [ ] Replace fixed Unix process-kill sleep with a bounded grace-period wait.
+- [x] Replace fixed Unix process-kill sleep with a bounded grace-period wait.
 
 Testing tasks:
 
-- [ ] Add SSE tests for multi-line events, CRLF input, large valid events, and
+- [x] Add SSE tests for multi-line events, CRLF input, large valid events, and
       oversized events.
-- [ ] Add fake provider tests that verify custom HTTP clients are used.
-- [ ] Add MCP HTTP race tests for concurrent tool calls.
-- [ ] Add MCP stdio cancellation tests with a blocking fake server.
-- [ ] Add Bash timeout and cancellation tests that verify `cmd.Wait` is joined.
+- [x] Add fake provider tests that verify custom HTTP clients are used.
+- [x] Add MCP HTTP race tests for concurrent tool calls.
+- [x] Add MCP stdio cancellation tests with a blocking fake server.
+- [x] Add Bash timeout and cancellation tests that verify `cmd.Wait` is joined.
 - [ ] Run `go test -race ./tools/mcp ./providers ./tools`.
+      Blocked locally on 2026-06-06: race builds require CGO and `gcc` is not
+      installed in this Windows environment. Concurrency coverage and
+      `go test ./...` pass.
 
 Acceptance criteria:
 
-- [ ] Valid large SSE events no longer fail at the `bufio.Scanner` token limit.
-- [ ] Provider and MCP HTTP behavior can be configured by production callers.
-- [ ] Concurrent MCP tool calls do not race request IDs or session headers.
-- [ ] Bash cancellation does not leave SDK-owned wait goroutines running.
+- [x] Valid large SSE events no longer fail at the `bufio.Scanner` token limit.
+- [x] Provider and MCP HTTP behavior can be configured by production callers.
+- [x] Concurrent MCP tool calls do not race request IDs or session headers.
+- [x] Bash cancellation does not leave SDK-owned wait goroutines running.
 
 ## Phase 12: Context-Aware Persistence And Scalable Stores
 
@@ -685,9 +688,9 @@ Sprint 9:
 
 Sprint 10:
 
-- [ ] Phase 11 SSE parser and HTTP client injection
-- [ ] Phase 11 MCP concurrency and cancellation fixes
-- [ ] Phase 11 Bash cleanup fixes
+- [x] Phase 11 SSE parser and HTTP client injection
+- [x] Phase 11 MCP concurrency and cancellation fixes
+- [x] Phase 11 Bash cleanup fixes
 
 Sprint 11:
 

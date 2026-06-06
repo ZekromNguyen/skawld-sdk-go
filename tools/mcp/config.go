@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const protocolVersion = "2025-06-18"
@@ -24,8 +26,11 @@ type StdioServerConfig struct {
 }
 
 type HTTPServerConfig struct {
-	URL     string
-	Headers map[string]string
+	URL              string
+	Headers          map[string]string
+	HTTPClient       *http.Client  `json:"-"`
+	Timeout          time.Duration `json:"-"`
+	MaxSSEEventBytes int
 }
 
 func (c ServerConfig) Validate() error {

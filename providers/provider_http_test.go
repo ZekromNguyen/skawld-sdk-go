@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -290,6 +293,93 @@ func TestProviderHTTPErrorMappingAndRetryAfter(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderUsesCustomHTTPClient(t *testing.T) {
+	var calls int32
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		if req.URL.Host != "custom.test" {
+			t.Fatalf("unexpected host %s", req.URL.Host)
+		}
+		body := `data: {"choices":[{"delta":{"content":"ok"}}]}` + "\n\n" +
+			`data: {"choices":[{"finish_reason":"stop"}]}` + "\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})}
+	provider := NewOpenAIChatCompletionsProvider(OpenAIOptions{
+		APIKey:     "key",
+		BaseURL:    "https://custom.test/v1",
+		HTTPClient: client,
+	})
+	var final core.ProviderStreamEvent
+	for result := range provider.Stream(context.Background(), core.ProviderRequest{
+		Model:    "gpt-test",
+		Messages: []core.Message{{Role: "user", Content: []core.ContentBlock{core.Text("hello")}}},
+	}) {
+		if result.Err != nil {
+			t.Fatal(result.Err)
+		}
+		final = result.Event
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expected custom client call, got %d", calls)
+	}
+	if final.Type != "message_end" || final.StopReason != core.StopEndTurn {
+		t.Fatalf("unexpected final event: %+v", final)
+	}
+}
+
+func TestProviderSSEMultilineAndOversizedEvents(t *testing.T) {
+	t.Run("multiline", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("content-type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\r\n\r\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\r\n\r\n"))
+		}))
+		defer server.Close()
+		provider := NewOpenAIChatCompletionsProvider(OpenAIOptions{APIKey: "key", BaseURL: server.URL})
+		var sawText bool
+		for result := range provider.Stream(context.Background(), core.ProviderRequest{Model: "gpt-test"}) {
+			if result.Err != nil {
+				t.Fatal(result.Err)
+			}
+			if result.Event.Type == "text_delta" && result.Event.Text == "a" {
+				sawText = true
+			}
+		}
+		if !sawText {
+			t.Fatal("expected text delta from CRLF SSE input")
+		}
+	})
+	t.Run("oversized", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("content-type", "text/event-stream")
+			_, _ = w.Write([]byte("data: " + strings.Repeat("a", 32) + "\n\n"))
+		}))
+		defer server.Close()
+		provider := NewOpenAIChatCompletionsProvider(OpenAIOptions{
+			APIKey:           "key",
+			BaseURL:          server.URL,
+			MaxSSEEventBytes: 8,
+		})
+		var sawErr bool
+		for result := range provider.Stream(context.Background(), core.ProviderRequest{Model: "gpt-test"}) {
+			if result.Err != nil {
+				sawErr = true
+				if !strings.Contains(result.Err.Error(), "sse event exceeds maximum size") {
+					t.Fatalf("unexpected error: %v", result.Err)
+				}
+			}
+		}
+		if !sawErr {
+			t.Fatal("expected oversized SSE error")
+		}
+	})
+}
+
 func TestOpenAIResponsesStopMapping(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -329,4 +419,10 @@ func writeSSE(t *testing.T, w http.ResponseWriter, payload map[string]interface{
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

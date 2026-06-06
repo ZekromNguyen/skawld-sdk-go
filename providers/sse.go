@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
+	internalsse "github.com/skawld/skawld-sdk-go/internal/sse"
 )
 
 type sseResult struct {
@@ -20,7 +20,9 @@ type sseResult struct {
 	Err   error
 }
 
-func postSSE(ctx context.Context, client *http.Client, url string, headers map[string]string, payload interface{}) <-chan sseResult {
+var defaultHTTPClient = &http.Client{Timeout: 0}
+
+func postSSE(ctx context.Context, client *http.Client, url string, headers map[string]string, payload interface{}, maxEventBytes int) <-chan sseResult {
 	out := make(chan sseResult)
 	go func() {
 		defer close(out)
@@ -39,7 +41,7 @@ func postSSE(ctx context.Context, client *http.Client, url string, headers map[s
 			req.Header.Set(k, v)
 		}
 		if client == nil {
-			client = &http.Client{Timeout: 0}
+			client = defaultHTTPClient
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -52,28 +54,19 @@ func postSSE(ctx context.Context, client *http.Client, url string, headers map[s
 			sendSSEResult(ctx, out, sseResult{Err: providerHTTPError(resp.StatusCode, strings.TrimSpace(string(body)), resp.Header.Get("retry-after"))})
 			return
 		}
-		sc := bufio.NewScanner(resp.Body)
-		var data strings.Builder
-		for sc.Scan() {
-			line := sc.Text()
-			if line == "" {
-				if !emitSSEData(ctx, data.String(), out) {
-					return
-				}
-				data.Reset()
-				continue
-			}
-			if strings.HasPrefix(line, "data:") {
-				data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-			}
-		}
-		if data.Len() > 0 {
-			if !emitSSEData(ctx, data.String(), out) {
+		parser := internalsse.NewParser(resp.Body, maxEventBytes)
+		for {
+			event, ok, err := parser.Next(ctx)
+			if err != nil {
+				sendSSEResult(ctx, out, sseResult{Err: err})
 				return
 			}
-		}
-		if err := sc.Err(); err != nil {
-			sendSSEResult(ctx, out, sseResult{Err: err})
+			if !ok {
+				return
+			}
+			if !emitSSEData(ctx, event.Data, out) {
+				return
+			}
 		}
 	}()
 	return out
@@ -204,10 +197,6 @@ func sendSSEResult(ctx context.Context, out chan<- sseResult, result sseResult) 
 	case <-ctx.Done():
 		return false
 	}
-}
-
-func httpClient() *http.Client {
-	return &http.Client{Timeout: 0}
 }
 
 func sendProviderEvent(ctx context.Context, out chan<- core.ProviderStreamResult, ev core.ProviderStreamEvent) bool {

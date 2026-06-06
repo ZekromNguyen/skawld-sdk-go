@@ -59,7 +59,7 @@ func (p *OpenAIResponsesProvider) Stream(ctx context.Context, req core.ProviderR
 		for k, v := range p.opts.DefaultHeaders {
 			headers[k] = v
 		}
-		wire := postSSE(ctx, httpClient(), p.opts.BaseURL+"/responses", headers, payload)
+		wire := postSSE(ctx, p.opts.HTTPClient, p.opts.BaseURL+"/responses", headers, payload, p.opts.MaxSSEEventBytes)
 		itemToCall := map[string]string{}
 		hasFunctionCall := false
 		stop := core.StopEndTurn

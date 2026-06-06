@@ -1,4 +1,4 @@
-package skawld
+package skawld_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	skawld "github.com/skawld/skawld-sdk-go"
 	"github.com/skawld/skawld-sdk-go/core"
 	"github.com/skawld/skawld-sdk-go/tools"
 	"github.com/skawld/skawld-sdk-go/tools/mcp"
@@ -83,12 +84,12 @@ func TestAgentSessionRegistersMCPToolsAndExecutesCall(t *testing.T) {
 
 	provider := &mcpProvider{}
 	registry := tools.NewRegistry()
-	agent, err := NewAgent(AgentOptions{
+	agent, err := skawld.NewAgent(skawld.AgentOptions{
 		Provider: provider,
 		Model:    "fake-model",
 		Tools:    registry,
-		Permissions: PermissionOptions{
-			Mode: PermissionModeYolo,
+		Permissions: skawld.PermissionOptions{
+			Mode: skawld.PermissionModeYolo,
 		},
 		MCPServers: []mcp.ServerConfig{{Name: "echo", HTTP: &mcp.HTTPServerConfig{URL: server.URL}}},
 	})
@@ -96,20 +97,20 @@ func TestAgentSessionRegistersMCPToolsAndExecutesCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Close()
-	session, err := agent.Session(context.Background(), SessionOptions{})
+	session, err := agent.Session(context.Background(), skawld.SessionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sawSystemTool, sawResult bool
-	for ev := range session.Run(context.Background(), "call mcp", RunOptions{}) {
-		if ev.Type == EventSystem {
+	for ev := range session.Run(context.Background(), "call mcp", skawld.RunOptions{}) {
+		if ev.Type == skawld.EventSystem {
 			for _, name := range ev.Tools {
 				if name == "mcp__echo__echo" {
 					sawSystemTool = true
 				}
 			}
 		}
-		if ev.Type == EventResult && ev.FinalText == "done" {
+		if ev.Type == skawld.EventResult && ev.FinalText == "done" {
 			sawResult = true
 		}
 	}

@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,8 +11,10 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/skawld/skawld-sdk-go/core"
+	internalsse "github.com/skawld/skawld-sdk-go/internal/sse"
 )
 
 type Manager struct {
@@ -97,7 +98,7 @@ func closeClients(clients []*Client) {
 type Client struct {
 	name      string
 	transport transport
-	nextID    int64
+	nextID    atomic.Int64
 }
 
 type transport interface {
@@ -202,8 +203,8 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
-	c.nextID++
-	return c.transport.Request(ctx, rpcRequest{JSONRPC: "2.0", ID: c.nextID, Method: method, Params: params})
+	id := c.nextID.Add(1)
+	return c.transport.Request(ctx, rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 }
 
 func (c *Client) notify(ctx context.Context, method string, params interface{}) error {
@@ -211,10 +212,20 @@ func (c *Client) notify(ctx context.Context, method string, params interface{}) 
 }
 
 type stdioTransport struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	decoder *json.Decoder
-	mu      sync.Mutex
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	writeMu   sync.Mutex
+	pendingMu sync.Mutex
+	pending   map[int64]chan rpcResult
+	readDone  chan struct{}
+	closeOnce sync.Once
+	waitOnce  sync.Once
+	waitErr   error
+}
+
+type rpcResult struct {
+	resp rpcResponse
+	err  error
 }
 
 func openStdioTransport(cfg ServerConfig) (*stdioTransport, error) {
@@ -242,40 +253,44 @@ func openStdioTransport(cfg ServerConfig) (*stdioTransport, error) {
 		return nil, err
 	}
 	go io.Copy(io.Discard, stderr)
-	return &stdioTransport{cmd: cmd, stdin: stdin, decoder: json.NewDecoder(stdout)}, nil
+	tr := &stdioTransport{
+		cmd:      cmd,
+		stdin:    stdin,
+		pending:  map[int64]chan rpcResult{},
+		readDone: make(chan struct{}),
+	}
+	go tr.readLoop(stdout)
+	return tr, nil
 }
 
 func (t *stdioTransport) Request(ctx context.Context, req rpcRequest) (map[string]interface{}, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := t.stdin.Write(append(raw, '\n')); err != nil {
+	ch := t.register(req.ID)
+	defer t.unregister(req.ID)
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	t.writeMu.Lock()
+	if _, err := t.stdin.Write(append(raw, '\n')); err != nil {
+		t.writeMu.Unlock()
+		return nil, err
+	}
+	t.writeMu.Unlock()
+	select {
+	case result := <-ch:
+		if result.err != nil {
+			return nil, result.err
 		}
-		var resp rpcResponse
-		if err := t.decoder.Decode(&resp); err != nil {
-			return nil, err
-		}
-		if resp.ID != req.ID {
-			continue
-		}
-		if resp.Error != nil {
-			return nil, fmt.Errorf("mcp error %d: %s", resp.Error.Code, resp.Error.Message)
-		}
-		return resp.Result, nil
+		return responseResult(result.resp, req.ID)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
 func (t *stdioTransport) Notify(ctx context.Context, req rpcRequest) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -283,34 +298,105 @@ func (t *stdioTransport) Notify(ctx context.Context, req rpcRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 	_, err = t.stdin.Write(append(raw, '\n'))
 	return err
 }
 
 func (t *stdioTransport) Close() error {
-	if t.stdin != nil {
-		_ = t.stdin.Close()
-	}
-	if t.cmd != nil && t.cmd.Process != nil {
-		_ = t.cmd.Process.Kill()
-		_, _ = t.cmd.Process.Wait()
-	}
+	t.closeOnce.Do(func() {
+		if t.stdin != nil {
+			_ = t.stdin.Close()
+		}
+		if t.cmd != nil && t.cmd.Process != nil {
+			_ = t.cmd.Process.Kill()
+		}
+		t.failPending(io.ErrClosedPipe)
+		_ = t.wait()
+	})
 	return nil
 }
 
-type httpTransport struct {
-	client    *http.Client
-	endpoint  string
-	headers   map[string]string
-	sessionID string
+func (t *stdioTransport) register(id int64) <-chan rpcResult {
+	ch := make(chan rpcResult, 1)
+	t.pendingMu.Lock()
+	t.pending[id] = ch
+	t.pendingMu.Unlock()
+	return ch
 }
+
+func (t *stdioTransport) unregister(id int64) {
+	t.pendingMu.Lock()
+	delete(t.pending, id)
+	t.pendingMu.Unlock()
+}
+
+func (t *stdioTransport) readLoop(stdout io.Reader) {
+	defer close(t.readDone)
+	decoder := json.NewDecoder(stdout)
+	for {
+		var resp rpcResponse
+		if err := decoder.Decode(&resp); err != nil {
+			t.failPending(err)
+			return
+		}
+		t.pendingMu.Lock()
+		ch := t.pending[resp.ID]
+		if ch != nil {
+			delete(t.pending, resp.ID)
+		}
+		t.pendingMu.Unlock()
+		if ch != nil {
+			ch <- rpcResult{resp: resp}
+		}
+	}
+}
+
+func (t *stdioTransport) failPending(err error) {
+	t.pendingMu.Lock()
+	defer t.pendingMu.Unlock()
+	for id, ch := range t.pending {
+		ch <- rpcResult{err: err}
+		delete(t.pending, id)
+	}
+}
+
+func (t *stdioTransport) wait() error {
+	t.waitOnce.Do(func() {
+		if t.cmd != nil {
+			t.waitErr = t.cmd.Wait()
+		}
+	})
+	return t.waitErr
+}
+
+type httpTransport struct {
+	client           *http.Client
+	endpoint         string
+	headers          map[string]string
+	maxSSEEventBytes int
+	mu               sync.RWMutex
+	sessionID        string
+}
+
+var defaultMCPHTTPClient = &http.Client{}
 
 func newHTTPTransport(cfg HTTPServerConfig) *httpTransport {
 	headers := make(map[string]string, len(cfg.Headers))
 	for k, v := range cfg.Headers {
 		headers[k] = v
 	}
-	return &httpTransport{client: &http.Client{}, endpoint: cfg.URL, headers: headers}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = defaultMCPHTTPClient
+	}
+	if cfg.Timeout > 0 {
+		copy := *client
+		copy.Timeout = cfg.Timeout
+		client = &copy
+	}
+	return &httpTransport{client: client, endpoint: cfg.URL, headers: headers, maxSSEEventBytes: cfg.MaxSSEEventBytes}
 }
 
 func (t *httpTransport) Request(ctx context.Context, req rpcRequest) (map[string]interface{}, error) {
@@ -324,8 +410,8 @@ func (t *httpTransport) Request(ctx context.Context, req rpcRequest) (map[string
 	}
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("accept", "application/json, text/event-stream")
-	if t.sessionID != "" {
-		httpReq.Header.Set("mcp-session-id", t.sessionID)
+	if sessionID := t.currentSessionID(); sessionID != "" {
+		httpReq.Header.Set("mcp-session-id", sessionID)
 	}
 	for k, v := range t.headers {
 		httpReq.Header.Set(k, v)
@@ -335,16 +421,14 @@ func (t *httpTransport) Request(ctx context.Context, req rpcRequest) (map[string
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if sid := resp.Header.Get("mcp-session-id"); sid != "" {
-		t.sessionID = sid
-	}
+	t.updateSessionID(resp.Header.Get("mcp-session-id"))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("mcp http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	ct := resp.Header.Get("content-type")
 	if strings.Contains(ct, "text/event-stream") {
-		return decodeSSEResponse(resp.Body, req.ID)
+		return decodeSSEResponse(ctx, resp.Body, req.ID, t.maxSSEEventBytes)
 	}
 	var rpc rpcResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpc); err != nil {
@@ -363,8 +447,8 @@ func (t *httpTransport) Notify(ctx context.Context, req rpcRequest) error {
 		return err
 	}
 	httpReq.Header.Set("content-type", "application/json")
-	if t.sessionID != "" {
-		httpReq.Header.Set("mcp-session-id", t.sessionID)
+	if sessionID := t.currentSessionID(); sessionID != "" {
+		httpReq.Header.Set("mcp-session-id", sessionID)
 	}
 	for k, v := range t.headers {
 		httpReq.Header.Set(k, v)
@@ -374,9 +458,7 @@ func (t *httpTransport) Notify(ctx context.Context, req rpcRequest) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if sid := resp.Header.Get("mcp-session-id"); sid != "" {
-		t.sessionID = sid
-	}
+	t.updateSessionID(resp.Header.Get("mcp-session-id"))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("mcp http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -386,29 +468,34 @@ func (t *httpTransport) Notify(ctx context.Context, req rpcRequest) error {
 
 func (t *httpTransport) Close() error { return nil }
 
-func decodeSSEResponse(r io.Reader, id int64) (map[string]interface{}, error) {
-	sc := bufio.NewScanner(r)
-	var data strings.Builder
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "" {
-			if result, ok, err := maybeDecodeSSEData(data.String(), id); ok || err != nil {
-				return result, err
-			}
-			data.Reset()
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		}
+func (t *httpTransport) currentSessionID() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.sessionID
+}
+
+func (t *httpTransport) updateSessionID(sessionID string) {
+	if sessionID == "" {
+		return
 	}
-	if data.Len() > 0 {
-		if result, ok, err := maybeDecodeSSEData(data.String(), id); ok || err != nil {
+	t.mu.Lock()
+	t.sessionID = sessionID
+	t.mu.Unlock()
+}
+
+func decodeSSEResponse(ctx context.Context, r io.Reader, id int64, maxEventBytes int) (map[string]interface{}, error) {
+	parser := internalsse.NewParser(r, maxEventBytes)
+	for {
+		event, ok, err := parser.Next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		if result, ok, err := maybeDecodeSSEData(event.Data, id); ok || err != nil {
 			return result, err
 		}
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
 	}
 	return nil, fmt.Errorf("mcp sse response for id %d not found", id)
 }

@@ -3,14 +3,17 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -106,6 +109,107 @@ func TestHTTPTransportDecodesSSEResponse(t *testing.T) {
 	}
 }
 
+func TestHTTPTransportConcurrentRequestsUseUniqueIDsAndSessionHeader(t *testing.T) {
+	var sawSession int32
+	ids := sync.Map{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if _, loaded := ids.LoadOrStore(req.ID, true); loaded {
+			t.Fatalf("duplicate request id %d", req.ID)
+		}
+		if r.Header.Get("mcp-session-id") == "sid" {
+			atomic.AddInt32(&sawSession, 1)
+		}
+		w.Header().Set("content-type", "application/json")
+		w.Header().Set("mcp-session-id", "sid")
+		writeRPC(t, w, req.ID, map[string]interface{}{"id": req.ID})
+	}))
+	defer server.Close()
+
+	tr := newHTTPTransport(HTTPServerConfig{URL: server.URL})
+	client := &Client{name: "test", transport: tr}
+	if _, err := client.request(context.Background(), "warmup", nil); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := client.request(context.Background(), "tools/call", nil); err != nil {
+				t.Errorf("request failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if atomic.LoadInt32(&sawSession) == 0 {
+		t.Fatal("expected concurrent requests to use stored session header")
+	}
+	var count int
+	ids.Range(func(_, _ interface{}) bool {
+		count++
+		return true
+	})
+	if count != 21 {
+		t.Fatalf("expected 21 unique request ids, got %d", count)
+	}
+}
+
+func TestHTTPTransportUsesCustomClient(t *testing.T) {
+	var calls int32
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		var rpc rpcRequest
+		if err := json.NewDecoder(req.Body).Decode(&rpc); err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(rpcResponse{JSONRPC: "2.0", ID: rpc.ID, Result: map[string]interface{}{"ok": true}})
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"content-type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+			Request:    req,
+		}, nil
+	})}
+	tr := newHTTPTransport(HTTPServerConfig{URL: "https://mcp.test", HTTPClient: client})
+	result, err := tr.Request(context.Background(), rpcRequest{JSONRPC: "2.0", ID: 1, Method: "ping"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["ok"] != true || atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("unexpected result=%+v calls=%d", result, calls)
+	}
+}
+
+func TestStdioRequestCancellationDoesNotBlockDecode(t *testing.T) {
+	if runtime.GOOS == "js" {
+		t.Skip("exec unavailable")
+	}
+	dir := t.TempDir()
+	serverPath := filepath.Join(dir, "blocking_mcp.go")
+	if err := os.WriteFile(serverPath, []byte(blockingMCPServerSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := openStdioTransport(ServerConfig{Name: "blocking", Stdio: &StdioServerConfig{Command: "go", Args: []string{"run", serverPath}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = tr.Request(ctx, rpcRequest{JSONRPC: "2.0", ID: 1, Method: "never"})
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("stdio request did not return promptly after cancellation")
+	}
+}
+
 func TestStdioEchoMCPServerEndToEnd(t *testing.T) {
 	if runtime.GOOS == "js" {
 		t.Skip("exec unavailable")
@@ -193,3 +297,25 @@ func main() {
 	}
 }
 `
+
+const blockingMCPServerSource = `package main
+
+import (
+	"bufio"
+	"os"
+	"time"
+)
+
+func main() {
+	sc := bufio.NewScanner(os.Stdin)
+	for sc.Scan() {
+		time.Sleep(time.Hour)
+	}
+}
+`
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}

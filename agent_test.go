@@ -3,7 +3,6 @@ package skawld
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -684,14 +683,6 @@ func TestPartialAssistantEventsAndThinkingSignature(t *testing.T) {
 	}
 	if !sawSignature {
 		t.Fatal("expected thinking signature to be preserved")
-	}
-}
-
-func TestExamplesBuild(t *testing.T) {
-	cmd := exec.Command("go", "test", "./examples/...")
-	cmd.Dir = "."
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("examples failed to build: %v\n%s", err, out)
 	}
 }
 

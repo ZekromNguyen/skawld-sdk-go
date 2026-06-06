@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -156,6 +157,32 @@ func TestBashToolExecuteAbort(t *testing.T) {
 	res, _ := tool.Execute(input, ctx)
 	if !res.IsError || !strings.Contains(res.Content.(string), "aborted") {
 		t.Errorf("expected aborted message, got %v", res.Content)
+	}
+}
+
+func TestTerminateProcessTreeWaitsForProcessExit(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("process-group shell semantics differ on windows")
+	}
+	cmd := exec.Command("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+	setupProcessOptions(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	if err := terminateProcessTree(cmd, done, time.Second); err != nil {
+		t.Fatalf("expected graceful termination, got %v", err)
+	}
+	select {
+	case <-done:
+		t.Fatal("wait channel should have been drained by terminateProcessTree")
+	default:
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatal("expected process state to be exited before return")
 	}
 }
 

@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"strings"
 
@@ -13,6 +14,8 @@ type OpenAIOptions struct {
 	APIKey                string
 	BaseURL               string
 	DefaultHeaders        map[string]string
+	HTTPClient            *http.Client
+	MaxSSEEventBytes      int
 	ContextWindowOverride func(core.ModelID) int
 }
 
@@ -75,7 +78,7 @@ func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.Pro
 		for k, v := range p.opts.DefaultHeaders {
 			headers[k] = v
 		}
-		wire := postSSE(ctx, httpClient(), p.opts.BaseURL+"/chat/completions", headers, payload)
+		wire := postSSE(ctx, p.opts.HTTPClient, p.opts.BaseURL+"/chat/completions", headers, payload, p.opts.MaxSSEEventBytes)
 		slots := map[int]struct{ id, name string }{}
 		stop := core.StopEndTurn
 		usage := core.Usage{}

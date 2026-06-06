@@ -12,6 +12,7 @@ import (
 
 const streamCap = 30000
 const combinedCap = 30000
+const bashCleanupGrace = 2 * time.Second
 
 type accumulator struct {
 	text           []byte
@@ -175,18 +176,14 @@ func (t BashTool) Execute(input map[string]interface{}, ctx core.ToolContext) (c
 			Summary: t.Summarize(input),
 		}, nil
 	case <-timer.C:
-		if cmd.Process != nil {
-			taskKillTree(cmd.Process.Pid)
-		}
+		_ = terminateProcessTree(cmd, done, bashCleanupGrace)
 		return core.ToolResult{
 			Content: fmt.Sprintf("Bash: timed out after %d ms.", timeoutMs),
 			Summary: t.Summarize(input),
 			IsError: true,
 		}, nil
 	case <-ctx.Context.Done():
-		if cmd.Process != nil {
-			taskKillTree(cmd.Process.Pid)
-		}
+		_ = terminateProcessTree(cmd, done, bashCleanupGrace)
 		return core.ToolResult{
 			Content: "Bash: aborted by signal.",
 			Summary: t.Summarize(input),

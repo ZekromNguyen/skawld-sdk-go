@@ -5,6 +5,8 @@ dist/
 *.test
 *.out
 coverage.out
+.gocache/
+.gomodcache/
 
 # Local/editor files
 .idea/

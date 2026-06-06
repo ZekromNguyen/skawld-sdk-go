@@ -2,15 +2,18 @@ package providers
 
 import (
 	"context"
+	"net/http"
 	"os"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
 
 type AnthropicOptions struct {
-	APIKey         string
-	BaseURL        string
-	DefaultHeaders map[string]string
+	APIKey           string
+	BaseURL          string
+	DefaultHeaders   map[string]string
+	HTTPClient       *http.Client
+	MaxSSEEventBytes int
 }
 
 type AnthropicProvider struct {
@@ -64,7 +67,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, req core.ProviderRequest
 		for k, v := range p.opts.DefaultHeaders {
 			headers[k] = v
 		}
-		wire := postSSE(ctx, httpClient(), p.opts.BaseURL+"/messages", headers, payload)
+		wire := postSSE(ctx, p.opts.HTTPClient, p.opts.BaseURL+"/messages", headers, payload, p.opts.MaxSSEEventBytes)
 		toolByIndex := map[int]string{}
 		stop := core.StopEndTurn
 		usage := core.Usage{}

@@ -225,6 +225,31 @@ func globMatch(pattern, rel string) bool {
 	return re.MatchString(filepath.ToSlash(rel))
 }
 
+func terminateProcessTree(cmd *exec.Cmd, done <-chan error, grace time.Duration) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	taskTerminateTree(cmd.Process.Pid)
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(grace):
+		taskKillTree(cmd.Process.Pid)
+		return <-done
+	}
+}
+
+func taskTerminateTree(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if os.PathSeparator == '\\' {
+		_ = exec.Command("taskkill", "/pid", fmt.Sprint(pid), "/t").Run()
+		return
+	}
+	_ = exec.Command("kill", "-TERM", fmt.Sprintf("-%d", pid)).Run()
+}
+
 func taskKillTree(pid int) {
 	if pid <= 0 {
 		return
@@ -233,7 +258,5 @@ func taskKillTree(pid int) {
 		_ = exec.Command("taskkill", "/pid", fmt.Sprint(pid), "/t", "/f").Run()
 		return
 	}
-	_ = exec.Command("kill", "-TERM", fmt.Sprintf("-%d", pid)).Run()
-	time.Sleep(2 * time.Second)
 	_ = exec.Command("kill", "-KILL", fmt.Sprintf("-%d", pid)).Run()
 }

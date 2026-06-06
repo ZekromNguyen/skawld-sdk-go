@@ -11,7 +11,8 @@ It keeps the same core ideas:
 
 The Go module is intentionally Go-native and standard-library first. It includes
 direct HTTP/SSE provider adapters for Anthropic Messages, OpenAI Chat
-Completions, and OpenAI Responses, plus a simple in-memory session store.
+Completions, and OpenAI Responses, MCP tools, skills, subagents, compaction,
+and in-memory or SQLite session stores.
 
 ```sh
 go test ./...
@@ -77,7 +78,10 @@ func main() {
 - `github.com/skawld/skawld-sdk-go/providers` exposes Anthropic/OpenAI provider adapters.
 - `github.com/skawld/skawld-sdk-go/tools` exposes `Registry`, `DefaultTools`, and built-in tools.
 - `github.com/skawld/skawld-sdk-go/sessions` exposes `InMemoryStore`.
+- `github.com/skawld/skawld-sdk-go/sessions/sqlite` exposes persistent SQLite sessions.
 - `github.com/skawld/skawld-sdk-go/permissions` exposes `Engine` and rule helpers.
+- `github.com/skawld/skawld-sdk-go/config` loads JSON config files.
 
 See [`docs/STRUCTURE.md`](./docs/STRUCTURE.md) for the target module layout and
-[`TODO.md`](./TODO.md) for the remaining TypeScript parity checklist.
+[`docs/USAGE.md`](./docs/USAGE.md) for provider, tool, permission, and SQLite notes.
+Release checks are tracked in [`docs/RELEASE_CHECKLIST.md`](./docs/RELEASE_CHECKLIST.md).

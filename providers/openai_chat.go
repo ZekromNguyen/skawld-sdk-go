@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -48,13 +49,13 @@ func (p *OpenAIChatCompletionsProvider) ContextWindow(model core.ModelID) int {
 	}
 }
 
-func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.ProviderRequest) (<-chan core.ProviderStreamEvent, <-chan error) {
-	out := make(chan core.ProviderStreamEvent)
-	errs := make(chan error, 1)
+func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.ProviderRequest) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult)
 	go func() {
 		defer close(out)
-		defer close(errs)
-		out <- core.ProviderStreamEvent{Type: "message_start", Model: req.Model}
+		if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "message_start", Model: req.Model}) {
+			return
+		}
 		payload := map[string]interface{}{
 			"model":          req.Model,
 			"messages":       p.translateMessages(req),
@@ -74,11 +75,16 @@ func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.Pro
 		for k, v := range p.opts.DefaultHeaders {
 			headers[k] = v
 		}
-		wire, wireErrs := postSSE(ctx, httpClient(), p.opts.BaseURL+"/chat/completions", headers, payload)
+		wire := postSSE(ctx, httpClient(), p.opts.BaseURL+"/chat/completions", headers, payload)
 		slots := map[int]struct{ id, name string }{}
 		stop := core.StopEndTurn
 		usage := core.Usage{}
-		for ev := range wire {
+		for result := range wire {
+			if result.Err != nil {
+				sendProviderError(ctx, out, result.Err)
+				return
+			}
+			ev := result.Event
 			if u, ok := ev["usage"].(map[string]interface{}); ok {
 				usage = core.Usage{InputTokens: intNum(u["prompt_tokens"]), OutputTokens: intNum(u["completion_tokens"])}
 			}
@@ -89,7 +95,9 @@ func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.Pro
 			ch, _ := choices[0].(map[string]interface{})
 			if delta, ok := ch["delta"].(map[string]interface{}); ok {
 				if text, ok := delta["content"].(string); ok && text != "" {
-					out <- core.ProviderStreamEvent{Type: "text_delta", Text: text}
+					if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "text_delta", Text: text}) {
+						return
+					}
 				}
 				if calls, ok := delta["tool_calls"].([]interface{}); ok {
 					for _, raw := range calls {
@@ -104,11 +112,15 @@ func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.Pro
 							slot.name = name
 						}
 						if _, exists := slots[idx]; !exists && slot.id != "" && slot.name != "" {
-							out <- core.ProviderStreamEvent{Type: "tool_use_start", ID: slot.id, Name: slot.name}
+							if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "tool_use_start", ID: slot.id, Name: slot.name}) {
+								return
+							}
 						}
 						slots[idx] = slot
 						if args, ok := fn["arguments"].(string); ok && args != "" && slot.id != "" {
-							out <- core.ProviderStreamEvent{Type: "tool_use_input_delta", ID: slot.id, JSONDelta: args}
+							if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "tool_use_input_delta", ID: slot.id, JSONDelta: args}) {
+								return
+							}
 						}
 					}
 				}
@@ -117,18 +129,16 @@ func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.Pro
 				stop = mapOpenAIStop(fr)
 				for i := 0; i < len(slots); i++ {
 					if slot, ok := slots[i]; ok && slot.id != "" {
-						out <- core.ProviderStreamEvent{Type: "tool_use_end", ID: slot.id}
+						if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "tool_use_end", ID: slot.id}) {
+							return
+						}
 					}
 				}
 			}
 		}
-		if err := <-wireErrs; err != nil {
-			errs <- err
-			return
-		}
-		out <- core.ProviderStreamEvent{Type: "message_end", StopReason: stop, Usage: usage}
+		sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "message_end", StopReason: stop, Usage: usage})
 	}()
-	return out, errs
+	return out
 }
 
 func (p *OpenAIChatCompletionsProvider) translateMessages(req core.ProviderRequest) []map[string]interface{} {
@@ -165,20 +175,84 @@ func (p *OpenAIChatCompletionsProvider) translateMessages(req core.ProviderReque
 		}
 		for _, b := range msg.Content {
 			if b.Type == core.BlockToolResult {
-				out = append(out, map[string]interface{}{"role": "tool", "tool_call_id": b.ToolUseID, "content": b.StringContent()})
+				out = append(out, map[string]interface{}{"role": "tool", "tool_call_id": b.ToolUseID, "content": openAIToolResultContent(b)})
 			}
 		}
-		text := ""
+		parts := make([]map[string]interface{}, 0)
 		for _, b := range msg.Content {
 			if b.Type == core.BlockText {
-				text += b.Text
+				parts = append(parts, map[string]interface{}{"type": "text", "text": b.Text})
+			}
+			if b.Type == core.BlockImage && b.Source != nil {
+				if image := openAIImageContent(*b.Source); image != nil {
+					parts = append(parts, image)
+				}
 			}
 		}
-		if text != "" {
-			out = append(out, map[string]interface{}{"role": "user", "content": text})
+		if len(parts) == 1 && parts[0]["type"] == "text" {
+			out = append(out, map[string]interface{}{"role": "user", "content": parts[0]["text"]})
+		} else if len(parts) > 0 {
+			out = append(out, map[string]interface{}{"role": "user", "content": parts})
 		}
 	}
 	return out
+}
+
+func openAIImageContent(source core.ImageSource) map[string]interface{} {
+	url := source.URL
+	if url == "" && source.Data != "" {
+		mediaType := source.MediaType
+		if mediaType == "" {
+			mediaType = "application/octet-stream"
+		}
+		url = "data:" + mediaType + ";base64," + source.Data
+	}
+	if url == "" {
+		return nil
+	}
+	return map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": url}}
+}
+
+func openAIToolResultContent(block core.ContentBlock) string {
+	if blocks, ok := block.Content.([]core.ContentBlock); ok {
+		return stringifyToolResultBlocks(blocks)
+	}
+	if blocks, ok := block.Content.([]interface{}); ok {
+		var rendered []string
+		for _, raw := range blocks {
+			switch b := raw.(type) {
+			case core.ContentBlock:
+				rendered = append(rendered, stringifyToolResultBlocks([]core.ContentBlock{b}))
+			case map[string]interface{}:
+				if b["type"] == core.BlockImage {
+					rendered = append(rendered, "[image]")
+				} else if text, ok := b["text"].(string); ok {
+					rendered = append(rendered, text)
+				}
+			default:
+				rawJSON, _ := json.Marshal(b)
+				rendered = append(rendered, string(rawJSON))
+			}
+		}
+		return strings.Join(rendered, "\n")
+	}
+	return block.StringContent()
+}
+
+func stringifyToolResultBlocks(blocks []core.ContentBlock) string {
+	var rendered []string
+	for _, block := range blocks {
+		switch block.Type {
+		case core.BlockText:
+			rendered = append(rendered, block.Text)
+		case core.BlockImage:
+			rendered = append(rendered, "[image]")
+		default:
+			raw, _ := json.Marshal(block)
+			rendered = append(rendered, string(raw))
+		}
+	}
+	return strings.Join(rendered, "\n")
 }
 
 func openAITools(tools []core.ToolSchema) []map[string]interface{} {

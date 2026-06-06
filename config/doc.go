@@ -1,5 +1,2 @@
-// Package config is reserved for Go config schema and loader parity with the
-// TypeScript SDK's config package.
-//
-// Current status: placeholder. See ../TODO.md for the migration checklist.
+// Package config loads JSON configuration files into AgentOptions.
 package config

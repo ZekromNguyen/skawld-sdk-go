@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	skawld "github.com/skawld/skawld-sdk-go"
+	"github.com/skawld/skawld-sdk-go/config"
 	"github.com/skawld/skawld-sdk-go/core"
 	"github.com/skawld/skawld-sdk-go/sessions"
 	"github.com/skawld/skawld-sdk-go/tools"
+	"github.com/skawld/skawld-sdk-go/tools/mcp"
 )
 
 type apiProvider struct{}
@@ -50,4 +52,23 @@ func TestPublicAPISmoke(t *testing.T) {
 		}
 	}
 	t.Fatal("expected successful result")
+}
+
+func TestPublicAPIConfigAdapter(t *testing.T) {
+	opts := skawld.AgentOptionsFromConfig(configOptionsForAPI(apiProvider{}))
+	if opts.Provider == nil || opts.Tools == nil || opts.SessionStore == nil {
+		t.Fatalf("expected populated options: %+v", opts)
+	}
+	if len(opts.MCPServers) != 1 || opts.MCPServers[0].Name != "srv" {
+		t.Fatalf("expected MCP config passthrough: %+v", opts.MCPServers)
+	}
+}
+
+func configOptionsForAPI(provider skawld.Provider) config.AgentOptions {
+	return config.AgentOptions{
+		Provider:       provider,
+		Model:          "fake-model",
+		PermissionMode: skawld.PermissionModeDefault,
+		MCPServers:     []mcp.ServerConfig{{Name: "srv", HTTP: &mcp.HTTPServerConfig{URL: "https://example.test/mcp"}}},
+	}
 }

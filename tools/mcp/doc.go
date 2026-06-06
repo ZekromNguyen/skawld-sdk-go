@@ -1,5 +1,3 @@
-// Package mcp is reserved for MCP server configuration, client lifecycle,
-// naming, result conversion, and MCP-backed tool registration.
-//
-// Current status: placeholder. See ../../TODO.md for the migration checklist.
+// Package mcp provides a small Model Context Protocol client and adapts MCP
+// server tools to the SDK's core.Tool interface.
 package mcp

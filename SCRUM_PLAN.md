@@ -42,7 +42,7 @@ Implementation tasks:
 
 - [x] Add `Session.Abort()` API equivalent to TypeScript `Session.abort()`.
 - [x] Reject concurrent active runs and clean up active-run state when streams finish.
-- [ ] Add cleanup semantics for abandoned run iterators.
+- [x] Add cleanup semantics for abandoned run iterators.
 - [x] Preserve provider metadata carried on session messages.
 - [x] Complete partial assistant event handling for text, thinking, and tool JSON.
 - [x] Implement provider retry loop around stream attempts.
@@ -138,32 +138,32 @@ Goal: make Anthropic and OpenAI adapters production-ready.
 Implementation tasks:
 
 - [x] Ship baseline Anthropic, OpenAI Chat Completions, and OpenAI Responses adapters.
-- [ ] Harden Anthropic Messages translation for all content block types.
-- [ ] Add Anthropic prompt caching breakpoints and TTL support.
-- [ ] Add Anthropic thinking and effort support.
-- [ ] Add Anthropic usage and typed error mapping.
-- [ ] Harden OpenAI Chat image and tool-result translation.
+- [x] Harden Anthropic Messages translation for all content block types.
+- [x] Add Anthropic prompt caching breakpoints and TTL support.
+- [x] Add Anthropic thinking and effort support.
+- [x] Add Anthropic usage and typed error mapping.
+- [x] Harden OpenAI Chat image and tool-result translation.
 - [x] Add OpenAI-compatible base URL, default header, and context-window options.
-- [ ] Harden OpenAI Responses previous-response replay.
-- [ ] Capture OpenAI Responses response metadata for replay.
-- [ ] Add OpenAI Responses reasoning summary and encrypted reasoning support.
-- [ ] Complete stop reason and retry-after mapping.
+- [x] Harden OpenAI Responses previous-response replay.
+- [x] Capture OpenAI Responses response metadata for replay.
+- [x] Add OpenAI Responses reasoning summary and encrypted reasoning support.
+- [x] Complete stop reason and retry-after mapping.
 
 Testing tasks:
 
 - [x] Port provider translation tests.
-- [ ] Add fake HTTP/SSE server tests for Anthropic.
-- [ ] Add fake HTTP/SSE server tests for OpenAI Chat.
-- [ ] Add fake HTTP/SSE server tests for OpenAI Responses.
-- [ ] Add provider error mapping tests.
+- [x] Add fake HTTP/SSE server tests for Anthropic.
+- [x] Add fake HTTP/SSE server tests for OpenAI Chat.
+- [x] Add fake HTTP/SSE server tests for OpenAI Responses.
+- [x] Add provider error mapping tests.
 - [x] Add provider retry-loop tests with fake providers.
-- [ ] Add provider adapter retry-after tests.
+- [x] Add provider adapter retry-after tests.
 
 Acceptance criteria:
 
-- [ ] Provider requests match the expected wire shape.
-- [ ] Streaming wire events map into the normalized provider event contract.
-- [ ] Typed provider errors are stable enough for application code.
+- [x] Provider requests match the expected wire shape.
+- [x] Streaming wire events map into the normalized provider event contract.
+- [x] Typed provider errors are stable enough for application code.
 
 ## Phase 5: Compaction
 
@@ -171,27 +171,27 @@ Goal: support long-running sessions without losing important context.
 
 Implementation tasks:
 
-- [ ] Add `CompactionStrategy` interface.
-- [ ] Implement default keep-last-10-turns compaction.
-- [ ] Add summarization provider call.
-- [ ] Add proactive context-window threshold logic.
-- [ ] Add forced compaction after context-length errors.
-- [ ] Re-inject skill listing and invoked skill bodies after compaction.
-- [ ] Emit `compaction` events with before/after counts.
+- [x] Add `CompactionStrategy` interface.
+- [x] Implement default keep-last-10-turns compaction.
+- [x] Add summarization provider call.
+- [x] Add proactive context-window threshold logic.
+- [x] Add forced compaction after context-length errors.
+- [x] Re-inject skill listing and invoked skill bodies after compaction.
+- [x] Emit `compaction` events with before/after counts.
 
 Testing tasks:
 
-- [ ] Port compaction unit tests.
-- [ ] Add strategy no-op suppression tests.
-- [ ] Add forced compaction retry tests.
-- [ ] Add provider-view versus full-history tests.
-- [ ] Add skill replay after compaction tests once skills are available.
+- [x] Port compaction unit tests.
+- [x] Add strategy no-op suppression tests.
+- [x] Add forced compaction retry tests.
+- [x] Add provider-view versus full-history tests.
+- [x] Add skill replay after compaction tests once skills are available.
 
 Acceptance criteria:
 
-- [ ] Compaction changes only provider view, not full stored history.
-- [ ] Context-length failures get one forced compaction retry.
-- [ ] Consumers receive accurate compaction events.
+- [x] Compaction changes only provider view, not full stored history.
+- [x] Context-length failures get one forced compaction retry.
+- [x] Consumers receive accurate compaction events.
 
 ## Phase 6: MCP Integration
 
@@ -199,26 +199,26 @@ Goal: expose external MCP server tools through the Go SDK.
 
 Implementation tasks:
 
-- [ ] Implement MCP server config types for stdio and HTTP.
-- [ ] Implement MCP client lifecycle.
-- [ ] Connect MCP servers lazily on first `Agent.Session`.
-- [ ] Register tools as `mcp__server__tool`.
-- [ ] Add MCP tool result conversion.
-- [ ] Add naming and collision handling.
-- [ ] Close MCP resources on `Agent.Close`.
+- [x] Implement MCP server config types for stdio and HTTP.
+- [x] Implement MCP client lifecycle.
+- [x] Connect MCP servers lazily on first `Agent.Session`.
+- [x] Register tools as `mcp__server__tool`.
+- [x] Add MCP tool result conversion.
+- [x] Add naming and collision handling.
+- [x] Close MCP resources on `Agent.Close`.
 
 Testing tasks:
 
-- [ ] Add MCP unit tests for config and naming.
-- [ ] Add MCP result conversion tests.
-- [ ] Add MCP lifecycle tests.
-- [ ] Add end-to-end echo MCP server test.
+- [x] Add MCP unit tests for config and naming.
+- [x] Add MCP result conversion tests.
+- [x] Add MCP lifecycle tests.
+- [x] Add end-to-end echo MCP server test.
 
 Acceptance criteria:
 
-- [ ] MCP tools appear in the system event and provider tool schemas.
-- [ ] Failed first connection can be retried later.
-- [ ] MCP resources close cleanly.
+- [x] MCP tools appear in the system event and provider tool schemas.
+- [x] Failed first connection can be retried later.
+- [x] MCP resources close cleanly.
 
 ## Phase 7: Skills
 
@@ -226,29 +226,29 @@ Goal: port SKILL.md loading and one-turn skill overlays.
 
 Implementation tasks:
 
-- [ ] Load `.skawld/skills/<name>/SKILL.md`.
-- [ ] Parse frontmatter fields.
-- [ ] Build skill listing prompt block.
-- [ ] Implement Skill tool.
-- [ ] Implement skill argument substitution.
-- [ ] Implement additive allowed-tools overlay.
-- [ ] Implement model override overlay.
-- [ ] Persist invoked skills.
-- [ ] Emit skills events.
+- [x] Load `.skawld/skills/<name>/SKILL.md`.
+- [x] Parse frontmatter fields.
+- [x] Build skill listing prompt block.
+- [x] Implement Skill tool.
+- [x] Implement skill argument substitution.
+- [x] Implement additive allowed-tools overlay.
+- [x] Implement model override overlay.
+- [x] Persist invoked skills.
+- [x] Emit skills events.
 
 Testing tasks:
 
-- [ ] Port skill loader tests.
-- [ ] Port listing tests.
-- [ ] Port substitution and shell-split tests.
-- [ ] Add Skill tool execution tests.
-- [ ] Add resume and compaction replay tests.
+- [x] Port skill loader tests.
+- [x] Port listing tests.
+- [x] Port substitution and shell-split tests.
+- [x] Add Skill tool execution tests.
+- [x] Add resume and compaction replay tests.
 
 Acceptance criteria:
 
-- [ ] Skills load lazily on first session.
-- [ ] Informational skills are auto-allowed.
-- [ ] Skill overlays affect exactly one assistant turn.
+- [x] Skills load lazily on first session.
+- [x] Informational skills are auto-allowed.
+- [x] Skill overlays affect exactly one assistant turn.
 
 ## Phase 8: Subagents
 
@@ -256,28 +256,28 @@ Goal: support nested agent runs and hierarchical event streams.
 
 Implementation tasks:
 
-- [ ] Load `.skawld/agents/<name>.md` definitions.
-- [ ] Implement built-in default subagent.
-- [ ] Implement subagent registry.
-- [ ] Implement Subagent tool.
-- [ ] Implement child session runner.
-- [ ] Filter child tool registry by agent definition.
-- [ ] Wrap child events as `subagent_event`.
-- [ ] Support nested subagent events.
+- [x] Load `.skawld/agents/<name>.md` definitions.
+- [x] Implement built-in default subagent.
+- [x] Implement subagent registry.
+- [x] Implement Subagent tool.
+- [x] Implement child session runner.
+- [x] Filter child tool registry by agent definition.
+- [x] Wrap child events as `subagent_event`.
+- [x] Support nested subagent events.
 
 Testing tasks:
 
-- [ ] Port subagent loader tests.
-- [ ] Port registry tests.
-- [ ] Port runner tests.
-- [ ] Add nested subagent event tests.
-- [ ] Add subagent end-to-end tests.
+- [x] Port subagent loader tests.
+- [x] Port registry tests.
+- [x] Port runner tests.
+- [x] Add nested subagent event tests.
+- [x] Add subagent end-to-end tests.
 
 Acceptance criteria:
 
-- [ ] Parent run streams child events without breaking event ordering.
-- [ ] Child sessions inherit the correct run options.
-- [ ] Nested subagents are observable by UI consumers.
+- [x] Parent run streams child events without breaking event ordering.
+- [x] Child sessions inherit the correct run options.
+- [x] Nested subagents are observable by UI consumers.
 
 ## Phase 9: Configuration, Documentation, And Release Readiness
 
@@ -285,30 +285,30 @@ Goal: make the Go SDK consumable by application developers.
 
 Implementation tasks:
 
-- [ ] Port config schema types.
-- [ ] Implement Go config loader and precedence rules.
+- [x] Port config schema types.
+- [x] Implement Go config loader and precedence rules.
 - [x] Add minimal example.
-- [ ] Add MCP example.
-- [ ] Add interactive CLI example.
-- [ ] Document provider setup and environment variables.
-- [ ] Document custom tools.
-- [ ] Document permission callbacks.
-- [ ] Document SQLite session persistence.
-- [ ] Add changelog and release checklist.
+- [x] Add MCP example.
+- [x] Add interactive CLI example.
+- [x] Document provider setup and environment variables.
+- [x] Document custom tools.
+- [x] Document permission callbacks.
+- [x] Document SQLite session persistence.
+- [x] Add changelog and release checklist.
 
 Testing tasks:
 
-- [ ] Add config loader tests.
-- [ ] Add missing/invalid config tests.
+- [x] Add config loader tests.
+- [x] Add missing/invalid config tests.
 - [x] Add examples build tests.
 - [x] Add public API/surface tests.
-- [ ] Run full parity suite before release.
+- [x] Run full parity suite before release.
 
 Acceptance criteria:
 
 - [x] Developers can follow docs to run a minimal agent.
 - [x] Examples compile in CI.
-- [ ] Release checklist clearly states remaining known gaps.
+- [x] Release checklist clearly states remaining known gaps.
 
 ## Suggested Sprint Grouping
 
@@ -337,18 +337,378 @@ Sprint 4:
 
 Sprint 5:
 
-- [ ] Phase 4 provider hardening
-- [ ] Phase 5 compaction
+- [x] Phase 4 provider hardening
+- [x] Phase 5 compaction
 
 Sprint 6:
 
-- [ ] Phase 6 MCP
+- [x] Phase 6 MCP
 
 Sprint 7:
 
-- [ ] Phase 7 skills
+- [x] Phase 7 skills
 
 Sprint 8:
 
-- [ ] Phase 8 subagents
-- [ ] Phase 9 docs and release readiness
+- [x] Phase 8 subagents
+- [x] Phase 9 docs and release readiness
+
+## Production Hardening Scrum Plan
+
+This plan turns the `TODO.md` Production Audit Backlog into phased delivery
+work. It continues after the completed migration plan and keeps the same
+Scrum-aligned structure: implementation tasks, testing tasks, and acceptance
+criteria for each increment.
+
+Status created from the production audit backlog on 2026-06-06.
+
+## Phase 10: Run Lifecycle And Provider Stream Safety
+
+Goal: eliminate goroutine leaks and deadlock-prone stream behavior in the core
+agent loop.
+
+Implementation tasks:
+
+- [x] Add a `RunHandle` API with `Events()`, `Abort()`, and `Close()`.
+- [x] Keep `Session.Run` as a compatibility wrapper around the new run handle.
+- [x] Add a context-aware event emitter and replace direct `out <- event` sends
+      in the run loop, compaction, permissions, tool execution, skills, and
+      subagents.
+- [x] Ensure active-run state is cleaned up when callers abandon event
+      consumption.
+- [x] Replace the provider dual-channel stream contract with a single
+      pull-based stream or a single result channel.
+- [x] Add a compatibility adapter for existing provider implementations during
+      the stream contract migration.
+- [x] Make Anthropic, OpenAI Chat, and OpenAI Responses provider sends
+      context-aware.
+- [x] Ensure provider stream retry behavior exits immediately on cancellation.
+
+Testing tasks:
+
+- [x] Add abandoned-consumer tests for `Session.Run`.
+- [x] Add tests that stop reading after the first event and verify active-run
+      cleanup.
+- [x] Add provider stream cancellation tests for partial text, thinking, and
+      tool-input deltas.
+- [x] Add provider error ordering tests for errors before and after partial
+      output.
+- [x] Add subagent cancellation tests that verify child events stop when the
+      parent run is canceled.
+- [x] Run `go test ./...` and targeted leak tests.
+
+Acceptance criteria:
+
+- [x] Abandoned event consumers do not leave a session permanently active.
+- [x] Every event emission path can exit through `ctx.Done()`.
+- [x] Provider streams have one clear terminal error path.
+- [x] Provider adapters cannot block forever on a downstream reader that has
+      stopped.
+
+## Phase 11: Transport, MCP, And Process Resource Safety
+
+Goal: make network streams, MCP transports, and shell process handling safe
+under cancellation and concurrency.
+
+Implementation tasks:
+
+- [ ] Replace scanner-based SSE parsing with a shared bounded reader-based SSE
+      parser.
+- [ ] Use the shared SSE parser in provider streaming and MCP HTTP streaming.
+- [ ] Add explicit maximum SSE event size and clear oversized-event errors.
+- [ ] Add injectable `HTTPDoer` or `*http.Client` options for providers.
+- [ ] Add injectable and timeout-aware HTTP client options for MCP HTTP
+      transports.
+- [ ] Replace per-call provider HTTP clients with a shared default client and
+      tuned transport.
+- [ ] Make MCP request IDs concurrency-safe with `atomic.Int64` or a mutex.
+- [ ] Protect MCP HTTP `sessionID` reads and writes with synchronization.
+- [ ] Redesign MCP stdio transport around a read loop and response
+      demultiplexer.
+- [ ] Ensure canceled MCP stdio requests cannot block forever in
+      `json.Decoder.Decode`.
+- [ ] Change `BashTool.Execute` so timeout and cancellation wait for process
+      cleanup before returning.
+- [ ] Replace fixed Unix process-kill sleep with a bounded grace-period wait.
+
+Testing tasks:
+
+- [ ] Add SSE tests for multi-line events, CRLF input, large valid events, and
+      oversized events.
+- [ ] Add fake provider tests that verify custom HTTP clients are used.
+- [ ] Add MCP HTTP race tests for concurrent tool calls.
+- [ ] Add MCP stdio cancellation tests with a blocking fake server.
+- [ ] Add Bash timeout and cancellation tests that verify `cmd.Wait` is joined.
+- [ ] Run `go test -race ./tools/mcp ./providers ./tools`.
+
+Acceptance criteria:
+
+- [ ] Valid large SSE events no longer fail at the `bufio.Scanner` token limit.
+- [ ] Provider and MCP HTTP behavior can be configured by production callers.
+- [ ] Concurrent MCP tool calls do not race request IDs or session headers.
+- [ ] Bash cancellation does not leave SDK-owned wait goroutines running.
+
+## Phase 12: Context-Aware Persistence And Scalable Stores
+
+Goal: make session persistence obey caller deadlines and scale task updates
+with patch size instead of session size.
+
+Implementation tasks:
+
+- [ ] Add `context.Context` to the `core.SessionStore` interface.
+- [ ] Update in-memory and SQLite stores to implement the context-aware
+      interface.
+- [ ] Thread session and run contexts through `Agent.Session`, `Session.append`,
+      compaction skill replay, and task tools.
+- [ ] Replace SQLite `context.Background()` transactions and queries with
+      `BeginTx`, `ExecContext`, `QueryContext`, and `QueryRowContext`.
+- [ ] Add compatibility adapters for existing custom stores if needed.
+- [ ] Deep-copy mutable records, messages, task metadata, content-block inputs,
+      and provider metadata at in-memory store boundaries.
+- [ ] Replace SQLite full task-graph replacement with targeted task-row and
+      task-edge mutations.
+- [ ] Implement scalable cycle validation for task dependency changes.
+
+Testing tasks:
+
+- [ ] Add cancellation tests for slow or locked SQLite operations.
+- [ ] Add in-memory store mutation-isolation tests.
+- [ ] Add SQLite task update tests that verify only targeted rows and edges
+      change.
+- [ ] Add SQLite task benchmarks for 100, 1,000, and 10,000 tasks.
+- [ ] Run `go test ./sessions/... ./tools/...` and relevant integration tests.
+
+Acceptance criteria:
+
+- [ ] Store operations can be canceled by callers.
+- [ ] In-memory store callers cannot mutate stored state through returned maps
+      or slices.
+- [ ] Updating one SQLite task no longer rewrites every task edge.
+- [ ] Session persistence remains backward compatible for existing stored data.
+
+## Phase 13: Runtime Ownership, Concurrency Contracts, And Security Policy
+
+Goal: clarify ownership boundaries and reduce unsafe shared mutable state.
+
+Implementation tasks:
+
+- [ ] Clone caller-provided tool registries in `NewAgent`.
+- [ ] Stop lazy MCP, Skill, and Subagent registration from mutating
+      caller-owned registries.
+- [ ] Reduce `Agent.Session` lock scope so slow MCP connections and filesystem
+      loads do not block unrelated session creation.
+- [ ] Replace broad runtime loading locks with explicit once/state guards.
+- [ ] Add a documented provider concurrency contract.
+- [ ] Add a provider factory or clone hook for custom providers that are not
+      safe for concurrent streams.
+- [ ] Add Go doc comments describing concurrency guarantees for `Agent`,
+      `Session`, `Provider`, `Tool`, `Registry`, and `SessionStore`.
+- [ ] Add configurable filesystem root policy for read, write, edit, glob, and
+      grep tools.
+- [ ] Define symlink handling and absolute-path behavior for filesystem tools.
+
+Testing tasks:
+
+- [ ] Add tests proving external registries are unchanged after agent runtime
+      loading.
+- [ ] Add concurrent session creation tests with slow MCP and skill loaders.
+- [ ] Add race tests for parent and subagent provider use.
+- [ ] Add filesystem policy tests for allowed roots, denied roots, absolute
+      paths, and symlink cases.
+- [ ] Run `go test -race ./...` for affected packages.
+
+Acceptance criteria:
+
+- [ ] Agent runtime loading cannot mutate a registry still owned by the caller.
+- [ ] Multiple sessions can be created without serializing on slow runtime
+      resource loading.
+- [ ] Provider concurrency expectations are explicit and tested.
+- [ ] Embedded/server users can restrict filesystem tools to approved roots.
+
+## Phase 14: Performance Hot Paths And Memory Efficiency
+
+Goal: reduce avoidable CPU and memory costs in long sessions and large
+workspaces.
+
+Implementation tasks:
+
+- [ ] Add benchmark fixtures for long message histories, large tool registries,
+      large workspaces, and large task graphs.
+- [ ] Cache stable system and tool token-estimate inputs.
+- [ ] Track approximate message token deltas when appending messages.
+- [ ] Recompute full token estimates only near compaction thresholds or after
+      compaction.
+- [ ] Stream grep fallback file scanning where multiline mode is not requested.
+- [ ] Stop grep fallback rendering once `head_limit` and output caps are met.
+- [ ] Use `strings.Builder` in hot provider translation paths that currently
+      concatenate repeated strings.
+- [ ] Use `slices` and `maps` package helpers where they simplify collection
+      code without hiding deep-copy requirements.
+- [ ] Consider `sync.Pool` only after benchmarks show repeated large temporary
+      allocations.
+
+Testing tasks:
+
+- [ ] Add benchmarks for `estimateProviderTokens`.
+- [ ] Add benchmarks for provider request translation.
+- [ ] Add benchmarks for grep fallback on large trees.
+- [ ] Add benchmarks for SQLite task updates.
+- [ ] Add allocation assertions for hot-path benchmarks where stable.
+- [ ] Run `go test -bench=. -benchmem` for targeted packages.
+
+Acceptance criteria:
+
+- [ ] Token estimation cost grows with new messages in normal turns instead of
+      full history size.
+- [ ] Grep fallback memory is bounded by current file and output limits for
+      non-multiline searches.
+- [ ] Performance refactors are backed by benchmark deltas.
+- [ ] No hot-path optimization weakens behavior covered by parity tests.
+
+## Phase 15: Error Handling, Observability, And Operational Hooks
+
+Goal: make production failures diagnosable without parsing model-facing text.
+
+Implementation tasks:
+
+- [ ] Wrap store, MCP, provider, and config errors with operation context using
+      `%w`.
+- [ ] Preserve typed `*core.SkawldError` values through retry and stream
+      boundaries.
+- [ ] Use `errors.Join` for multi-close failures such as MCP client shutdown.
+- [ ] Separate SDK-facing typed errors from model-facing tool result strings.
+- [ ] Add optional structured logging through `*slog.Logger`.
+- [ ] Add stable log fields for session ID, run ID, provider ID, tool name,
+      attempt number, duration, retryability, and error kind.
+- [ ] Add an observer hook for provider attempts, tool execution, permission
+      callbacks, compaction, MCP calls, and store operations.
+- [ ] Add duration tracking for permission callbacks without spawning unbounded
+      goroutines.
+- [ ] Document secret redaction rules for logs and observer payloads.
+
+Testing tasks:
+
+- [ ] Add `errors.Is` and `errors.As` tests for provider, store, MCP, and
+      permission failures.
+- [ ] Add tests for `errors.Join` behavior during MCP close.
+- [ ] Add logger tests using a captured `slog.Handler`.
+- [ ] Add observer callback tests for successful and failed runs.
+- [ ] Add permission callback timeout/cancellation tests.
+
+Acceptance criteria:
+
+- [ ] Application code can classify important failures without string parsing.
+- [ ] Logs and observer events provide enough context to debug failed runs.
+- [ ] Observability hooks do not expose secrets or large raw payloads by
+      default.
+- [ ] Permission callback behavior is measurable and cancellation-safe.
+
+## Phase 16: Package Boundaries And Maintainability
+
+Goal: reduce duplicate parsing, weak internal typing, and package coupling.
+
+Implementation tasks:
+
+- [ ] Move shared SSE parsing to `internal/sse`.
+- [ ] Move shared frontmatter parsing to `internal/frontmatter`.
+- [ ] Replace duplicated skill and subagent frontmatter parsers with the shared
+      parser.
+- [ ] Move shared deep-copy helpers for JSON-like SDK values to an internal
+      package.
+- [ ] Add typed metadata structs for skill and subagent frontmatter.
+- [ ] Add typed input parsers for built-in tools while preserving the generic
+      `core.Tool` interface.
+- [ ] Replace internal `map[string]interface{}` usage with typed structs where
+      the schema is stable.
+- [ ] Split config parsing from provider construction through a provider
+      factory or binder.
+- [ ] Add a package-structure document for the post-hardening layout.
+- [ ] Normalize internal names around provider history, complete history,
+      subagent directories, and runtime tools.
+
+Testing tasks:
+
+- [ ] Add shared frontmatter parser fixtures for skills and subagents.
+- [ ] Add typed built-in tool input parser tests.
+- [ ] Add config binder tests with fake providers.
+- [ ] Add package import tests to prevent accidental dependency cycles.
+- [ ] Run `go test ./...` and `go vet ./...`.
+
+Acceptance criteria:
+
+- [ ] Skill and subagent frontmatter behavior is consistent.
+- [ ] Stable internal schemas are parsed once and used as typed values.
+- [ ] Config parsing can be tested without importing concrete providers.
+- [ ] Package boundaries remain clear for future SDK extensions.
+
+## Phase 17: Production Validation And Release Gate
+
+Goal: prove the hardened SDK is ready for long-running and high-concurrency
+production use.
+
+Implementation tasks:
+
+- [ ] Add a production readiness checklist to release documentation.
+- [ ] Add documented commands for race tests, leak-focused tests, benchmarks,
+      and normal CI.
+- [ ] Add stress-test fixtures for concurrent sessions, subagents, MCP calls,
+      permission callbacks, and Bash cancellation.
+- [ ] Add compatibility notes for any public API changes such as `RunHandle`,
+      provider streams, context-aware stores, or filesystem policy.
+- [ ] Update README and usage docs with the new lifecycle and concurrency
+      contracts.
+- [ ] Re-score production readiness after the hardening phases.
+
+Testing tasks:
+
+- [ ] Run `gofmt ./...`.
+- [ ] Run `go vet ./...`.
+- [ ] Run `go test ./...`.
+- [ ] Run `go test -race ./...`.
+- [ ] Run targeted benchmarks with `-benchmem`.
+- [ ] Run examples build tests.
+
+Acceptance criteria:
+
+- [ ] No known goroutine leaks in lifecycle tests.
+- [ ] No data races in the supported concurrency test suite.
+- [ ] Benchmark results are recorded for the main hot paths.
+- [ ] Documentation describes all production-relevant lifecycle, concurrency,
+      security, and observability behavior.
+
+## Production Hardening Sprint Grouping
+
+Sprint 9:
+
+- [x] Phase 10 run lifecycle cleanup
+- [x] Phase 10 provider stream contract migration
+
+Sprint 10:
+
+- [ ] Phase 11 SSE parser and HTTP client injection
+- [ ] Phase 11 MCP concurrency and cancellation fixes
+- [ ] Phase 11 Bash cleanup fixes
+
+Sprint 11:
+
+- [ ] Phase 12 context-aware store interface
+- [ ] Phase 12 in-memory deep-copy boundaries
+- [ ] Phase 12 SQLite targeted task updates
+
+Sprint 12:
+
+- [ ] Phase 13 runtime ownership and registry isolation
+- [ ] Phase 13 provider concurrency contract
+- [ ] Phase 13 filesystem root policy
+
+Sprint 13:
+
+- [ ] Phase 14 benchmark baseline
+- [ ] Phase 14 token estimate and grep fallback optimization
+- [ ] Phase 15 typed errors and structured observability
+
+Sprint 14:
+
+- [ ] Phase 16 shared parsers and package boundary cleanup
+- [ ] Phase 16 typed tool/config internals
+- [ ] Phase 17 production validation and release gate

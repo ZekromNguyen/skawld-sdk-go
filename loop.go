@@ -13,68 +13,150 @@ import (
 	"github.com/skawld/skawld-sdk-go/permissions"
 )
 
-func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, out chan<- core.Event) {
+type eventEmitter struct {
+	ctx context.Context
+	out chan<- core.Event
+}
+
+func newEventEmitter(ctx context.Context, out chan<- core.Event) *eventEmitter {
+	return &eventEmitter{ctx: ctx, out: out}
+}
+
+func (e *eventEmitter) Emit(ev core.Event) bool {
+	if e == nil || e.out == nil {
+		return false
+	}
+	select {
+	case <-e.ctx.Done():
+		return false
+	default:
+	}
+	select {
+	case e.out <- ev:
+		return true
+	default:
+	}
+	select {
+	case e.out <- ev:
+		return true
+	case <-e.ctx.Done():
+		return false
+	}
+}
+
+func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, emitter *eventEmitter) {
 	started := time.Now()
 	runID := id.New()
 	total := core.Usage{}
 	agent := s.agent
-	out <- core.Event{Type: core.EventSystem, Subtype: "init", SessionID: s.ID, RunID: runID, Model: agent.opts.Model, Tools: agent.opts.Tools.Names(), PermissionMode: agent.opts.Permissions.Mode, CWD: agent.opts.CWD}
-	userMsg := buildUserMessage(prompt, opts.Images)
-	if err := s.append([]core.Message{userMsg}); err != nil {
-		emitRunError(out, err, total, started)
+	if !emitter.Emit(core.Event{Type: core.EventSystem, Subtype: "init", SessionID: s.ID, RunID: runID, Model: agent.opts.Model, Tools: agent.opts.Tools.Names(), PermissionMode: agent.opts.Permissions.Mode, CWD: agent.opts.CWD}) {
 		return
 	}
-	out <- core.Event{Type: core.EventUser, Message: userMsg}
+	for _, ev := range s.consumeInitialEvents() {
+		if !emitter.Emit(ev) {
+			return
+		}
+	}
+	userMsg := buildUserMessage(prompt, opts.Images)
+	if err := s.append([]core.Message{userMsg}); err != nil {
+		emitRunError(emitter, err, total, started)
+		return
+	}
+	if !emitter.Emit(core.Event{Type: core.EventUser, Message: userMsg}) {
+		return
+	}
 
 	for turn := 0; turn < agent.opts.MaxTurns; turn++ {
 		if ctx.Err() != nil {
-			out <- core.Event{Type: core.EventResult, Subtype: "aborted", StopReason: core.StopError, TotalUsage: total, DurationMS: time.Since(started).Milliseconds()}
+			_ = emitter.Emit(abortedResult(total, started))
 			return
 		}
-		req := s.buildProviderRequest(ctx, opts)
-		assistant, stop, usage, err := s.streamTurn(ctx, req, out)
+		if _, err := s.compactProviderView(ctx, compactionTriggerProactive, emitter); err != nil {
+			emitRunError(emitter, err, total, started)
+			return
+		}
+		overlay := s.consumePendingSkillOverlay()
+		req := s.buildProviderRequest(ctx, opts, overlay)
+		assistant, stop, usage, err := s.streamTurn(ctx, req, emitter)
 		if err != nil {
 			if isAbortError(ctx, err) {
-				out <- core.Event{Type: core.EventResult, Subtype: "aborted", StopReason: core.StopError, TotalUsage: total, DurationMS: time.Since(started).Milliseconds()}
+				_ = emitter.Emit(abortedResult(total, started))
 				return
 			}
-			emitRunError(out, err, total, started)
+			if isContextLengthError(err) {
+				compacted, compactErr := s.compactProviderView(ctx, compactionTriggerForced, emitter)
+				if compactErr != nil {
+					emitRunError(emitter, compactErr, total, started)
+					return
+				}
+				if compacted {
+					req = s.buildProviderRequest(ctx, opts, overlay)
+					assistant, stop, usage, err = s.streamTurn(ctx, req, emitter)
+					if err == nil {
+						goto turnSucceeded
+					}
+					if isAbortError(ctx, err) {
+						_ = emitter.Emit(abortedResult(total, started))
+						return
+					}
+				}
+			}
+			emitRunError(emitter, err, total, started)
 			return
 		}
+	turnSucceeded:
 		if err := s.append([]core.Message{assistant}); err != nil {
-			emitRunError(out, err, total, started)
+			emitRunError(emitter, err, total, started)
 			return
 		}
-		out <- core.Event{Type: core.EventAssistant, Message: assistant, StopReason: stop}
+		if !emitter.Emit(core.Event{Type: core.EventAssistant, Message: assistant, StopReason: stop}) {
+			return
+		}
 		total = core.AddUsage(total, usage)
 		s.lastUsage = usage
-		out <- core.Event{Type: core.EventUsage, Usage: usage, Cumulative: total}
-		if stop != core.StopToolUse {
-			out <- core.Event{Type: core.EventResult, Subtype: "success", StopReason: stop, TotalUsage: total, DurationMS: time.Since(started).Milliseconds(), FinalText: firstText(assistant)}
+		if !emitter.Emit(core.Event{Type: core.EventUsage, Usage: usage, Cumulative: total}) {
 			return
 		}
-		results := s.executeToolCalls(ctx, runID, toolUseBlocks(assistant), out)
+		if stop != core.StopToolUse {
+			s.clearActiveSkillOverlay()
+			_ = emitter.Emit(core.Event{Type: core.EventResult, Subtype: "success", StopReason: stop, TotalUsage: total, DurationMS: time.Since(started).Milliseconds(), FinalText: firstText(assistant)})
+			return
+		}
+		results := s.executeToolCalls(ctx, runID, toolUseBlocks(assistant), emitter)
+		s.clearActiveSkillOverlay()
 		resultMsg := core.Message{Role: "user", Content: results}
 		if err := s.append([]core.Message{resultMsg}); err != nil {
-			emitRunError(out, err, total, started)
+			emitRunError(emitter, err, total, started)
 			return
 		}
-		out <- core.Event{Type: core.EventUser, Message: resultMsg}
+		if !emitter.Emit(core.Event{Type: core.EventUser, Message: resultMsg}) {
+			return
+		}
 	}
-	out <- core.Event{Type: core.EventError, Error: &core.EventErrorPayload{Name: "TurnLimitError", Message: "max turns exceeded"}}
-	out <- core.Event{Type: core.EventResult, Subtype: "error", StopReason: core.StopError, TotalUsage: total, DurationMS: time.Since(started).Milliseconds()}
+	if !emitter.Emit(core.Event{Type: core.EventError, Error: &core.EventErrorPayload{Name: "TurnLimitError", Message: "max turns exceeded"}}) {
+		return
+	}
+	_ = emitter.Emit(core.Event{Type: core.EventResult, Subtype: "error", StopReason: core.StopError, TotalUsage: total, DurationMS: time.Since(started).Milliseconds()})
 }
 
-func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions) core.ProviderRequest {
+func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions, overlay *skillOverlay) core.ProviderRequest {
 	s.providerMu.Lock()
 	msgs := append([]core.Message(nil), s.providerView...)
 	s.providerMu.Unlock()
+	model := s.agent.opts.Model
+	system := append([]core.SystemBlock(nil), s.agent.system...)
+	if overlay != nil {
+		if overlay.Model != "" {
+			model = overlay.Model
+		}
+		system = append(system, core.SystemBlock{Type: "text", Text: skillOverlaySystemText(overlay)})
+	}
 	maxOut := s.agent.opts.MaxOutputTokens
 	if opts.MaxOutputTokens != nil {
 		maxOut = opts.MaxOutputTokens
 	}
 	return core.ProviderRequest{
-		Model: s.agent.opts.Model, System: s.agent.system,
+		Model: model, System: system,
 		Tools: s.agent.opts.Tools.Schemas(), Messages: msgs,
 		MaxOutputTokens: maxOut, Temperature: opts.Temperature,
 		CachePrompt: true, Thinking: opts.Thinking, Effort: opts.Effort,
@@ -82,14 +164,14 @@ func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions) cor
 	}
 }
 
-func (s *Session) streamTurn(ctx context.Context, req core.ProviderRequest, out chan<- core.Event) (core.Message, core.StopReason, core.Usage, error) {
+func (s *Session) streamTurn(ctx context.Context, req core.ProviderRequest, emitter *eventEmitter) (core.Message, core.StopReason, core.Usage, error) {
 	attempts := req.MaxRetries + 1
 	if attempts < 1 {
 		attempts = 1
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
-		msg, stop, usage, committed, err := s.streamTurnAttempt(ctx, req, out)
+		msg, stop, usage, committed, err := s.streamTurnAttempt(ctx, req, emitter)
 		if err == nil {
 			return msg, stop, usage, nil
 		}
@@ -101,8 +183,11 @@ func (s *Session) streamTurn(ctx context.Context, req core.ProviderRequest, out 
 	return core.Message{}, core.StopError, core.Usage{}, lastErr
 }
 
-func (s *Session) streamTurnAttempt(ctx context.Context, req core.ProviderRequest, out chan<- core.Event) (core.Message, core.StopReason, core.Usage, bool, error) {
-	events, errs := s.agent.opts.Provider.Stream(ctx, req)
+func (s *Session) streamTurnAttempt(ctx context.Context, req core.ProviderRequest, emitter *eventEmitter) (core.Message, core.StopReason, core.Usage, bool, error) {
+	stream, err := core.StreamProvider(ctx, s.agent.opts.Provider, req)
+	if err != nil {
+		return core.Message{}, core.StopError, core.Usage{}, false, err
+	}
 	var content []core.ContentBlock
 	textBuf := ""
 	thinkingBuf := ""
@@ -126,63 +211,80 @@ func (s *Session) streamTurnAttempt(ctx context.Context, req core.ProviderReques
 			thinkingSig = ""
 		}
 	}
-	for ev := range events {
-		switch ev.Type {
-		case "text_delta":
-			committed = true
-			flushThinking()
-			textBuf += ev.Text
-			if s.agent.opts.IncludePartialMessages {
-				out <- core.Event{Type: core.EventPartialAssistant, Delta: map[string]interface{}{"kind": "text", "text": ev.Text}}
-			}
-		case "thinking_delta":
-			committed = true
-			flushText()
-			thinkingBuf += ev.Text
-			if ev.Signature != "" {
-				thinkingSig = ev.Signature
-			}
-			if s.agent.opts.IncludePartialMessages {
-				out <- core.Event{Type: core.EventPartialAssistant, Delta: map[string]interface{}{"kind": "thinking", "text": ev.Text}}
-			}
-		case "tool_use_start":
-			committed = true
-			flushText()
-			flushThinking()
-			toolMeta[ev.ID] = ev.Name
-			toolInput[ev.ID] = ""
-		case "tool_use_input_delta":
-			committed = true
-			toolInput[ev.ID] += ev.JSONDelta
-			if s.agent.opts.IncludePartialMessages {
-				out <- core.Event{Type: core.EventPartialAssistant, Delta: map[string]interface{}{"kind": "tool_use_input", "tool_use_id": ev.ID, "json_delta": ev.JSONDelta}}
-			}
-		case "tool_use_end":
-			input := map[string]interface{}{}
-			if raw := toolInput[ev.ID]; raw != "" {
-				if err := json.Unmarshal([]byte(raw), &input); err != nil {
-					input = map[string]interface{}{"__invalidJson": true, "raw": raw}
+	for {
+		select {
+		case result, ok := <-stream:
+			if !ok {
+				if ctx.Err() != nil {
+					return core.Message{}, core.StopError, usage, committed, core.NewAbortError("provider stream canceled", ctx.Err())
 				}
+				flushText()
+				flushThinking()
+				msg := core.Message{Role: "assistant", Content: content}
+				if !providerMetadata.Empty() {
+					msg.ProviderMetadata = providerMetadata
+				}
+				return msg, stop, usage, committed, nil
 			}
-			content = append(content, core.ToolUse(ev.ID, toolMeta[ev.ID], input))
-		case "message_end":
-			flushText()
-			flushThinking()
-			stop = ev.StopReason
-			usage = ev.Usage
-			providerMetadata = ev.ProviderMetadata
+			if result.Err != nil {
+				return core.Message{}, core.StopError, usage, committed, result.Err
+			}
+			ev := result.Event
+			switch ev.Type {
+			case "text_delta":
+				committed = true
+				flushThinking()
+				textBuf += ev.Text
+				if s.agent.opts.IncludePartialMessages {
+					if !emitter.Emit(core.Event{Type: core.EventPartialAssistant, Delta: map[string]interface{}{"kind": "text", "text": ev.Text}}) {
+						return core.Message{}, core.StopError, usage, committed, core.NewAbortError("run event stream closed", nil)
+					}
+				}
+			case "thinking_delta":
+				committed = true
+				flushText()
+				thinkingBuf += ev.Text
+				if ev.Signature != "" {
+					thinkingSig = ev.Signature
+				}
+				if s.agent.opts.IncludePartialMessages {
+					if !emitter.Emit(core.Event{Type: core.EventPartialAssistant, Delta: map[string]interface{}{"kind": "thinking", "text": ev.Text}}) {
+						return core.Message{}, core.StopError, usage, committed, core.NewAbortError("run event stream closed", nil)
+					}
+				}
+			case "tool_use_start":
+				committed = true
+				flushText()
+				flushThinking()
+				toolMeta[ev.ID] = ev.Name
+				toolInput[ev.ID] = ""
+			case "tool_use_input_delta":
+				committed = true
+				toolInput[ev.ID] += ev.JSONDelta
+				if s.agent.opts.IncludePartialMessages {
+					if !emitter.Emit(core.Event{Type: core.EventPartialAssistant, Delta: map[string]interface{}{"kind": "tool_use_input", "tool_use_id": ev.ID, "json_delta": ev.JSONDelta}}) {
+						return core.Message{}, core.StopError, usage, committed, core.NewAbortError("run event stream closed", nil)
+					}
+				}
+			case "tool_use_end":
+				input := map[string]interface{}{}
+				if raw := toolInput[ev.ID]; raw != "" {
+					if err := json.Unmarshal([]byte(raw), &input); err != nil {
+						input = map[string]interface{}{"__invalidJson": true, "raw": raw}
+					}
+				}
+				content = append(content, core.ToolUse(ev.ID, toolMeta[ev.ID], input))
+			case "message_end":
+				flushText()
+				flushThinking()
+				stop = ev.StopReason
+				usage = ev.Usage
+				providerMetadata = ev.ProviderMetadata
+			}
+		case <-ctx.Done():
+			return core.Message{}, core.StopError, usage, committed, core.NewAbortError("provider stream canceled", ctx.Err())
 		}
 	}
-	if err := <-errs; err != nil {
-		return core.Message{}, core.StopError, usage, committed, err
-	}
-	flushText()
-	flushThinking()
-	msg := core.Message{Role: "assistant", Content: content}
-	if !providerMetadata.Empty() {
-		msg.ProviderMetadata = providerMetadata
-	}
-	return msg, stop, usage, committed, nil
 }
 
 type scheduledToolCall struct {
@@ -197,7 +299,7 @@ type toolBatch struct {
 	calls    []scheduledToolCall
 }
 
-func (s *Session) executeToolCalls(ctx context.Context, runID string, blocks []core.ContentBlock, out chan<- core.Event) []core.ContentBlock {
+func (s *Session) executeToolCalls(ctx context.Context, runID string, blocks []core.ContentBlock, emitter *eventEmitter) []core.ContentBlock {
 	results := make([]core.ContentBlock, len(blocks))
 	var batches []toolBatch
 	for i, b := range blocks {
@@ -224,22 +326,22 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, blocks []c
 		}
 	}
 	for _, batch := range batches {
-		calls := s.resolveToolCallPermissions(ctx, batch.calls, results, out)
+		calls := s.resolveToolCallPermissions(ctx, batch.calls, results, emitter)
 		if !batch.parallel {
 			for _, call := range calls {
 				if results[call.index].Type == core.BlockToolResult {
 					continue
 				}
-				results[call.index] = s.executePreparedToolCall(ctx, runID, call, out)
+				results[call.index] = s.executePreparedToolCall(ctx, runID, call, emitter)
 			}
 			continue
 		}
-		s.executeParallelBatch(ctx, runID, calls, results, out)
+		s.executeParallelBatch(ctx, runID, calls, results, emitter)
 	}
 	return results
 }
 
-func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []scheduledToolCall, results []core.ContentBlock, out chan<- core.Event) []scheduledToolCall {
+func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []scheduledToolCall, results []core.ContentBlock, emitter *eventEmitter) []scheduledToolCall {
 	ready := make([]scheduledToolCall, 0, len(calls))
 	asks := make([]scheduledToolCall, 0)
 	requests := make([]core.PermissionRequest, 0)
@@ -249,6 +351,10 @@ func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []schedu
 		}
 		if call.tool == nil {
 			results[call.index] = core.ToolResultBlock(call.block.ID, "Tool call could not be resolved", true)
+			continue
+		}
+		if s.skillAllowsTool(call.tool.Name()) {
+			ready = append(ready, call)
 			continue
 		}
 		decision := s.agent.perm.Evaluate(permissions.PendingCall{ToolUseID: call.block.ID, Tool: call.tool, Input: call.input, CWD: s.agent.opts.CWD})
@@ -268,7 +374,9 @@ func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []schedu
 	if len(requests) == 0 {
 		return ready
 	}
-	out <- core.Event{Type: core.EventPermissionRequest, Requests: requests}
+	if !emitter.Emit(core.Event{Type: core.EventPermissionRequest, Requests: requests}) {
+		return ready
+	}
 	for _, call := range asks {
 		decision := s.agent.perm.Resolve(ctx, permissions.PendingCall{ToolUseID: call.block.ID, Tool: call.tool, Input: call.input, CWD: s.agent.opts.CWD})
 		if decision.Decision == permissions.DecisionDeny {
@@ -283,16 +391,24 @@ func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []schedu
 	return ready
 }
 
-func (s *Session) executePreparedToolCall(ctx context.Context, runID string, call scheduledToolCall, out chan<- core.Event) core.ContentBlock {
+func (s *Session) executePreparedToolCall(ctx context.Context, runID string, call scheduledToolCall, emitter *eventEmitter) core.ContentBlock {
 	if call.tool == nil {
 		return core.ToolResultBlock(call.block.ID, "Tool call could not be resolved", true)
 	}
-	out <- core.Event{Type: core.EventToolCallStart, ToolUseID: call.block.ID, ToolName: call.tool.Name(), Input: call.input}
+	if !emitter.Emit(core.Event{Type: core.EventToolCallStart, ToolUseID: call.block.ID, ToolName: call.tool.Name(), Input: call.input}) {
+		return core.ToolResultBlock(call.block.ID, "Tool call aborted.", true)
+	}
 	start := time.Now()
 	res, err := call.tool.Execute(call.input, core.ToolContext{
 		Context: ctx, CWD: s.agent.opts.CWD, FileReadTracker: s.readTracker,
 		SessionID: s.ID, RunID: runID, SessionStore: s.store,
-		Emit: func(ev core.Event) { out <- ev },
+		Emit: func(ev core.Event) { _ = emitter.Emit(ev) },
+		InvokeSkill: func(skillCtx context.Context, inv core.SkillInvocation) (core.ToolResult, error) {
+			return s.invokeSkill(skillCtx, inv, emitter)
+		},
+		RunSubagent: func(subCtx context.Context, inv core.SubagentInvocation) (core.ToolResult, error) {
+			return s.runSubagent(subCtx, inv, emitter)
+		},
 	})
 	isErr := false
 	content := interface{}("")
@@ -303,11 +419,14 @@ func (s *Session) executePreparedToolCall(ctx context.Context, runID string, cal
 		isErr = res.IsError
 		content = res.Content
 	}
-	out <- core.Event{Type: core.EventToolCallEnd, ToolUseID: call.block.ID, ToolName: call.tool.Name(), IsError: isErr, DurationMS: time.Since(start).Milliseconds()}
+	if !emitter.Emit(core.Event{Type: core.EventToolCallEnd, ToolUseID: call.block.ID, ToolName: call.tool.Name(), IsError: isErr, DurationMS: time.Since(start).Milliseconds()}) {
+		isErr = true
+		content = "Tool call aborted."
+	}
 	return core.ToolResultBlock(call.block.ID, content, isErr)
 }
 
-func (s *Session) executeParallelBatch(ctx context.Context, runID string, calls []scheduledToolCall, results []core.ContentBlock, out chan<- core.Event) {
+func (s *Session) executeParallelBatch(ctx context.Context, runID string, calls []scheduledToolCall, results []core.ContentBlock, emitter *eventEmitter) {
 	concurrency := s.agent.opts.ToolConcurrency
 	if concurrency <= 0 {
 		concurrency = 8
@@ -334,7 +453,10 @@ func (s *Session) executeParallelBatch(ctx context.Context, runID string, calls 
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				resultCh <- pair{index: call.index, block: core.ToolResultBlock(call.block.ID, "Tool call aborted.", true)}
+				select {
+				case resultCh <- pair{index: call.index, block: core.ToolResultBlock(call.block.ID, "Tool call aborted.", true)}:
+				case <-emitter.ctx.Done():
+				}
 				return
 			}
 			wrappedOut := make(chan core.Event, 16)
@@ -352,13 +474,18 @@ func (s *Session) executeParallelBatch(ctx context.Context, runID string, calls 
 						finished[ev.ToolUseID] = true
 						stateMu.Unlock()
 					}
-					out <- ev
+					if !emitter.Emit(ev) {
+						return
+					}
 				}
 			}()
-			block := s.executePreparedToolCall(ctx, runID, call, wrappedOut)
+			block := s.executePreparedToolCall(ctx, runID, call, newEventEmitter(emitter.ctx, wrappedOut))
 			close(wrappedOut)
 			<-doneForward
-			resultCh <- pair{index: call.index, block: block}
+			select {
+			case resultCh <- pair{index: call.index, block: block}:
+			case <-emitter.ctx.Done():
+			}
 		}()
 	}
 	done := make(chan struct{})
@@ -381,7 +508,7 @@ func (s *Session) executeParallelBatch(ctx context.Context, runID string, calls 
 				stateMu.Lock()
 				for id, call := range started {
 					if !finished[id] {
-						out <- core.Event{Type: core.EventToolCallEnd, ToolUseID: id, ToolName: call.tool.Name(), IsError: true}
+						_ = emitter.Emit(core.Event{Type: core.EventToolCallEnd, ToolUseID: id, ToolName: call.tool.Name(), IsError: true})
 						results[call.index] = core.ToolResultBlock(id, "Tool call aborted.", true)
 					}
 				}
@@ -415,7 +542,7 @@ func firstText(msg core.Message) string {
 	return ""
 }
 
-func emitRunError(out chan<- core.Event, err error, usage core.Usage, started time.Time) {
+func emitRunError(emitter *eventEmitter, err error, usage core.Usage, started time.Time) {
 	name := "Error"
 	retryable := false
 	var skerr *core.SkawldError
@@ -423,8 +550,14 @@ func emitRunError(out chan<- core.Event, err error, usage core.Usage, started ti
 		name = string(skerr.Kind)
 		retryable = skerr.Retryable
 	}
-	out <- core.Event{Type: core.EventError, Error: &core.EventErrorPayload{Name: name, Message: err.Error(), Retryable: retryable}}
-	out <- core.Event{Type: core.EventResult, Subtype: "error", StopReason: core.StopError, TotalUsage: usage, DurationMS: time.Since(started).Milliseconds()}
+	if !emitter.Emit(core.Event{Type: core.EventError, Error: &core.EventErrorPayload{Name: name, Message: err.Error(), Retryable: retryable}}) {
+		return
+	}
+	_ = emitter.Emit(core.Event{Type: core.EventResult, Subtype: "error", StopReason: core.StopError, TotalUsage: usage, DurationMS: time.Since(started).Milliseconds()})
+}
+
+func abortedResult(usage core.Usage, started time.Time) core.Event {
+	return core.Event{Type: core.EventResult, Subtype: "aborted", StopReason: core.StopError, TotalUsage: usage, DurationMS: time.Since(started).Milliseconds()}
 }
 
 func isAbortError(ctx context.Context, err error) bool {
@@ -438,4 +571,9 @@ func isAbortError(ctx context.Context, err error) bool {
 func isRetryable(err error) bool {
 	var skerr *core.SkawldError
 	return errors.As(err, &skerr) && skerr.Retryable
+}
+
+func isContextLengthError(err error) bool {
+	var skerr *core.SkawldError
+	return errors.As(err, &skerr) && skerr.Kind == core.ErrorContextLength
 }

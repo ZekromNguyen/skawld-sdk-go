@@ -122,6 +122,150 @@ func TestSessionAbortActiveRunEmitsAbortedResult(t *testing.T) {
 	session.Abort()
 }
 
+type handleBlockingProvider struct {
+	started chan struct{}
+	ctxDone chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func newHandleBlockingProvider() *handleBlockingProvider {
+	return &handleBlockingProvider{started: make(chan struct{}), ctxDone: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (p *handleBlockingProvider) ID() string { return "handle-blocking" }
+func (p *handleBlockingProvider) ContextWindow(model core.ModelID) int {
+	return 100000
+}
+func (p *handleBlockingProvider) Stream(ctx context.Context, req core.ProviderRequest) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult)
+	go func() {
+		defer close(out)
+		defer close(p.closed)
+		close(p.started)
+		select {
+		case out <- core.ProviderStreamResult{Event: core.ProviderStreamEvent{Type: "message_start", Model: req.Model}}:
+		case <-ctx.Done():
+			p.once.Do(func() { close(p.ctxDone) })
+			return
+		}
+		<-ctx.Done()
+		p.once.Do(func() { close(p.ctxDone) })
+	}()
+	return out
+}
+
+func TestRunHandleAbortStillEmitsAbortedResult(t *testing.T) {
+	provider := newHandleBlockingProvider()
+	agent, err := NewAgent(AgentOptions{Provider: provider, Model: "fake-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := session.StartRun(context.Background(), "wait", RunOptions{})
+	if ev := <-handle.Events(); ev.Type != EventSystem {
+		t.Fatalf("expected system event, got %s", ev.Type)
+	}
+	handle.Abort()
+	var sawAborted bool
+	for ev := range handle.Events() {
+		if ev.Type == EventResult && ev.Subtype == "aborted" {
+			sawAborted = true
+		}
+	}
+	if !sawAborted {
+		t.Fatal("expected aborted result after handle abort")
+	}
+}
+
+func TestRunHandleCloseCleansUpAbandonedRun(t *testing.T) {
+	provider := newHandleBlockingProvider()
+	agent, err := NewAgent(AgentOptions{Provider: provider, Model: "fake-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := session.StartRun(context.Background(), "wait", RunOptions{})
+	if ev := <-handle.Events(); ev.Type != EventSystem {
+		t.Fatalf("expected system event, got %s", ev.Type)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider stream did not start")
+	}
+	handle.Close()
+	select {
+	case <-handle.Done():
+	case <-time.After(time.Second):
+		t.Fatal("run handle did not finish after close")
+	}
+	select {
+	case <-provider.ctxDone:
+	case <-time.After(time.Second):
+		t.Fatal("provider context was not canceled")
+	}
+	nextProvider := newHandleBlockingProvider()
+	session.agent.opts.Provider = nextProvider
+	events := session.Run(context.Background(), "next", RunOptions{})
+	session.Abort()
+	var sawAborted bool
+	for ev := range events {
+		if ev.Type == EventResult && ev.Subtype == "aborted" {
+			sawAborted = true
+		}
+	}
+	if !sawAborted {
+		t.Fatal("expected session to accept a new run after closing abandoned handle")
+	}
+}
+
+func TestSessionRunContextCancelCleansUpStoppedConsumer(t *testing.T) {
+	provider := newHandleBlockingProvider()
+	agent, err := NewAgent(AgentOptions{Provider: provider, Model: "fake-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := session.Run(ctx, "wait", RunOptions{})
+	if ev := <-events; ev.Type != EventSystem {
+		t.Fatalf("expected system event, got %s", ev.Type)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider stream did not start")
+	}
+	cancel()
+	waitFor(t, time.Second, func() bool {
+		session.activeMu.Lock()
+		defer session.activeMu.Unlock()
+		return !session.active
+	})
+	nextProvider := newHandleBlockingProvider()
+	session.agent.opts.Provider = nextProvider
+	next := session.StartRun(context.Background(), "next", RunOptions{})
+	select {
+	case ev := <-next.Events():
+		if ev.Type != EventSystem {
+			t.Fatalf("expected new run system event, got %s", ev.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("new run did not start after canceled abandoned Session.Run")
+	}
+	next.Close()
+}
+
 func TestSessionRejectsConcurrentRun(t *testing.T) {
 	agent, err := NewAgent(AgentOptions{Provider: &blockingProvider{}, Model: "fake-model"})
 	if err != nil {
@@ -243,6 +387,166 @@ func TestProviderRetryExhaustionEmitsTypedError(t *testing.T) {
 	}
 	if provider.calls != 2 {
 		t.Fatalf("expected 2 provider attempts, got %d", provider.calls)
+	}
+}
+
+type partialErrorStreamProvider struct{}
+
+func (p *partialErrorStreamProvider) ID() string { return "partial-error-stream" }
+func (p *partialErrorStreamProvider) ContextWindow(model core.ModelID) int {
+	return 100000
+}
+func (p *partialErrorStreamProvider) Stream(ctx context.Context, req core.ProviderRequest) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult)
+	go func() {
+		defer close(out)
+		select {
+		case out <- core.ProviderStreamResult{Event: core.ProviderStreamEvent{Type: "message_start", Model: req.Model}}:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case out <- core.ProviderStreamResult{Event: core.ProviderStreamEvent{Type: "text_delta", Text: "partial"}}:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case out <- core.ProviderStreamResult{Err: core.NewProviderError("after partial", 503, true, errors.New("after partial"))}:
+		case <-ctx.Done():
+		}
+	}()
+	return out
+}
+
+func TestProviderErrorAfterPartialOutputEmitsErrorWithoutRetry(t *testing.T) {
+	provider := &partialErrorStreamProvider{}
+	agent, err := NewAgent(AgentOptions{
+		Provider:               provider,
+		Model:                  "fake-model",
+		MaxRetries:             3,
+		IncludePartialMessages: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPartial, sawProviderError bool
+	for ev := range session.Run(context.Background(), "partial error", RunOptions{}) {
+		if ev.Type == EventPartialAssistant && ev.Delta["text"] == "partial" {
+			sawPartial = true
+		}
+		if ev.Type == EventError && ev.Error != nil && ev.Error.Name == string(core.ErrorProvider) {
+			sawProviderError = true
+		}
+	}
+	if !sawPartial {
+		t.Fatal("expected partial assistant event before provider error")
+	}
+	if !sawProviderError {
+		t.Fatal("expected provider error event")
+	}
+}
+
+type cancelAfterDeltaProvider struct {
+	kind    string
+	started chan struct{}
+	ctxDone chan struct{}
+}
+
+func newCancelAfterDeltaProvider(kind string) *cancelAfterDeltaProvider {
+	return &cancelAfterDeltaProvider{kind: kind, started: make(chan struct{}), ctxDone: make(chan struct{})}
+}
+
+func (p *cancelAfterDeltaProvider) ID() string { return "cancel-after-delta" }
+func (p *cancelAfterDeltaProvider) ContextWindow(model core.ModelID) int {
+	return 100000
+}
+func (p *cancelAfterDeltaProvider) Stream(ctx context.Context, req core.ProviderRequest) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult)
+	go func() {
+		defer close(out)
+		defer close(p.ctxDone)
+		close(p.started)
+		send := func(ev core.ProviderStreamEvent) bool {
+			select {
+			case out <- core.ProviderStreamResult{Event: ev}:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+		if !send(core.ProviderStreamEvent{Type: "message_start", Model: req.Model}) {
+			return
+		}
+		switch p.kind {
+		case "text":
+			if !send(core.ProviderStreamEvent{Type: "text_delta", Text: "partial"}) {
+				return
+			}
+		case "thinking":
+			if !send(core.ProviderStreamEvent{Type: "thinking_delta", Text: "partial"}) {
+				return
+			}
+		case "tool_use_input":
+			if !send(core.ProviderStreamEvent{Type: "tool_use_start", ID: "call_1", Name: "TaskList"}) {
+				return
+			}
+			if !send(core.ProviderStreamEvent{Type: "tool_use_input_delta", ID: "call_1", JSONDelta: `{}`}) {
+				return
+			}
+		}
+		<-ctx.Done()
+	}()
+	return out
+}
+
+func TestProviderStreamCancellationAfterPartialDeltas(t *testing.T) {
+	for _, kind := range []string{"text", "thinking", "tool_use_input"} {
+		t.Run(kind, func(t *testing.T) {
+			provider := newCancelAfterDeltaProvider(kind)
+			agent, err := NewAgent(AgentOptions{
+				Provider:               provider,
+				Model:                  "fake-model",
+				IncludePartialMessages: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, err := agent.Session(context.Background(), SessionOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			handle := session.StartRun(context.Background(), "partial", RunOptions{})
+			select {
+			case <-provider.started:
+			case <-time.After(time.Second):
+				t.Fatal("provider stream did not start")
+			}
+			var sawPartial bool
+			for ev := range handle.Events() {
+				if ev.Type == EventPartialAssistant && ev.Delta["kind"] == kind {
+					sawPartial = true
+					handle.Close()
+					break
+				}
+			}
+			if !sawPartial {
+				t.Fatalf("expected %s partial event", kind)
+			}
+			select {
+			case <-provider.ctxDone:
+			case <-time.After(time.Second):
+				t.Fatal("provider context was not canceled")
+			}
+			select {
+			case <-handle.Done():
+			case <-time.After(time.Second):
+				t.Fatal("run handle did not finish")
+			}
+		})
 	}
 }
 
@@ -696,4 +1000,16 @@ func TestNonParallelToolsRemainSerialized(t *testing.T) {
 	if atomic.LoadInt32(&maxActive) != 1 {
 		t.Fatalf("expected no overlap for serial tools, max active = %d", maxActive)
 	}
+}
+
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }

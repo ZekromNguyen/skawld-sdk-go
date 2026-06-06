@@ -40,11 +40,10 @@ skawld-sdk-go/
     support.
 
   sessions/
-    Session persistence implementations. Current implementation is in-memory.
-    SQLite is planned in sessions/sqlite.
+    Session persistence implementations. Includes the default in-memory store.
 
   sessions/sqlite/
-    Target home for SQLite-backed SessionStore parity with the TypeScript SDK.
+    SQLite-backed SessionStore parity with the TypeScript SDK.
 
   skills/
     Target home for SKILL.md loading, frontmatter parsing, listing generation,
@@ -52,11 +51,11 @@ skawld-sdk-go/
     integration.
 
   subagents/
-    Target home for agent-definition loading, registry construction, default
-    subagent, and subagent runner integration.
+    Agent-definition loading, registry construction, default subagent, and
+    subagent runner integration.
 
   config/
-    Target home for schema/config-loader support once Go config parity is added.
+    JSON config schema and loader support.
 
   examples/
     Runnable examples.
@@ -78,9 +77,8 @@ skawld-sdk-go/
 - `github.com/skawld/skawld-sdk-go/permissions`: permission rules and callbacks.
 
 Packages such as `skills`, `subagents`, `config`, `tools/mcp`, and
-`sessions/sqlite` are intentionally present as migration targets, but their
-current exported APIs are placeholders until the corresponding parity tasks in
-`TODO.md` are completed.
+`sessions/sqlite` are implemented migration targets. Remaining known gaps are
+tracked in `TODO.md` and `docs/RELEASE_CHECKLIST.md`.
 
 ## Why There Is No `pkg/`
 

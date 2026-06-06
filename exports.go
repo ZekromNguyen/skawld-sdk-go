@@ -3,6 +3,7 @@ package skawld
 import (
 	"github.com/skawld/skawld-sdk-go/core"
 	"github.com/skawld/skawld-sdk-go/permissions"
+	"github.com/skawld/skawld-sdk-go/tools/mcp"
 )
 
 type ModelID = core.ModelID
@@ -15,12 +16,21 @@ type Event = core.Event
 type EventType = core.EventType
 type PermissionMode = core.PermissionMode
 type Provider = core.Provider
+type ProviderRequest = core.ProviderRequest
+type ProviderStream = core.ProviderStream
+type ProviderStreamEvent = core.ProviderStreamEvent
+type ProviderStreamResult = core.ProviderStreamResult
+type StreamingProvider = core.StreamingProvider
+type LegacyStreamingProvider = core.LegacyStreamingProvider
 type Tool = core.Tool
 type ToolResult = core.ToolResult
 type ToolContext = core.ToolContext
 type SessionStore = core.SessionStore
 type PermissionRule = permissions.Rule
 type CanUseTool = permissions.CanUseTool
+type MCPServerConfig = mcp.ServerConfig
+type MCPStdioServerConfig = mcp.StdioServerConfig
+type MCPHTTPServerConfig = mcp.HTTPServerConfig
 
 const (
 	PermissionModeDefault     = core.PermissionModeDefault
@@ -44,4 +54,8 @@ const (
 	EventCompaction        = core.EventCompaction
 	EventResult            = core.EventResult
 	EventError             = core.EventError
+	EventSkillsLoaded      = core.EventSkillsLoaded
+	EventSkillInvoked      = core.EventSkillInvoked
+	EventSkillCompleted    = core.EventSkillCompleted
+	EventSubagent          = core.EventSubagent
 )

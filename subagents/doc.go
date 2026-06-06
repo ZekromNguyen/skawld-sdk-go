@@ -1,5 +1,2 @@
-// Package subagents is reserved for agent definition loading, registry
-// construction, default subagent support, and subagent runner integration.
-//
-// Current status: placeholder. See ../TODO.md for the migration checklist.
+// Package subagents loads child-agent definitions and exposes the Subagent tool.
 package subagents

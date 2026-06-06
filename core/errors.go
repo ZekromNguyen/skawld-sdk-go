@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type ErrorKind string
 
@@ -14,16 +17,18 @@ const (
 	ErrorProvider         ErrorKind = "provider"
 	ErrorConfig           ErrorKind = "config"
 	ErrorSkill            ErrorKind = "skill"
+	ErrorSubagent         ErrorKind = "subagent"
 )
 
 type SkawldError struct {
-	Kind      ErrorKind
-	Message   string
-	Retryable bool
-	Status    int
-	ToolName  string
-	Reason    string
-	Cause     error
+	Kind       ErrorKind
+	Message    string
+	Retryable  bool
+	Status     int
+	ToolName   string
+	Reason     string
+	RetryAfter time.Duration
+	Cause      error
 }
 
 func (e *SkawldError) Error() string {

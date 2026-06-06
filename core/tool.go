@@ -15,6 +15,18 @@ type ToolContext struct {
 	RunID           string
 	SessionStore    SessionStore
 	Emit            func(Event)
+	InvokeSkill     func(context.Context, SkillInvocation) (ToolResult, error)
+	RunSubagent     func(context.Context, SubagentInvocation) (ToolResult, error)
+}
+
+type SkillInvocation struct {
+	Name      string
+	Arguments string
+}
+
+type SubagentInvocation struct {
+	Name string
+	Task string
 }
 
 type ToolResult struct {

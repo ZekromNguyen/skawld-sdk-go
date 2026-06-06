@@ -21,14 +21,18 @@ func (p *OpenAIResponsesProvider) ContextWindow(model core.ModelID) int {
 	return NewOpenAIChatCompletionsProvider(p.opts).ContextWindow(model)
 }
 
-func (p *OpenAIResponsesProvider) Stream(ctx context.Context, req core.ProviderRequest) (<-chan core.ProviderStreamEvent, <-chan error) {
-	out := make(chan core.ProviderStreamEvent)
-	errs := make(chan error, 1)
+func (p *OpenAIResponsesProvider) Stream(ctx context.Context, req core.ProviderRequest) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult)
 	go func() {
 		defer close(out)
-		defer close(errs)
-		out <- core.ProviderStreamEvent{Type: "message_start", Model: req.Model}
-		payload := map[string]interface{}{"model": req.Model, "input": responsesInput(req.Messages), "stream": true}
+		if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "message_start", Model: req.Model}) {
+			return
+		}
+		input, previousResponseID := responsesInputAndPrevious(req.Messages)
+		payload := map[string]interface{}{"model": req.Model, "input": input, "stream": true}
+		if previousResponseID != "" {
+			payload["previous_response_id"] = previousResponseID
+		}
 		instructions := ""
 		for i, b := range req.System {
 			if i > 0 {
@@ -45,19 +49,37 @@ func (p *OpenAIResponsesProvider) Stream(ctx context.Context, req core.ProviderR
 		if req.MaxOutputTokens != nil {
 			payload["max_output_tokens"] = *req.MaxOutputTokens
 		}
+		if req.Temperature != nil {
+			payload["temperature"] = *req.Temperature
+		}
+		if reasoning := responsesReasoning(req.Thinking, req.Effort); reasoning != nil {
+			payload["reasoning"] = reasoning
+		}
 		headers := map[string]string{"authorization": "Bearer " + p.opts.APIKey}
 		for k, v := range p.opts.DefaultHeaders {
 			headers[k] = v
 		}
-		wire, wireErrs := postSSE(ctx, httpClient(), p.opts.BaseURL+"/responses", headers, payload)
+		wire := postSSE(ctx, httpClient(), p.opts.BaseURL+"/responses", headers, payload)
 		itemToCall := map[string]string{}
 		hasFunctionCall := false
 		stop := core.StopEndTurn
 		usage := core.Usage{}
-		for ev := range wire {
+		responseID := ""
+		var outputItems []map[string]interface{}
+		for result := range wire {
+			if result.Err != nil {
+				sendProviderError(ctx, out, result.Err)
+				return
+			}
+			ev := result.Event
 			switch ev["type"] {
+			case "response.created":
+				if resp, ok := ev["response"].(map[string]interface{}); ok {
+					responseID = firstString(responseID, stringValue(resp["id"]))
+				}
 			case "response.output_item.added":
 				item, _ := ev["item"].(map[string]interface{})
+				outputItems = upsertResponseOutputItem(outputItems, item)
 				if item["type"] == "function_call" {
 					id, _ := item["id"].(string)
 					callID, _ := item["call_id"].(string)
@@ -65,46 +87,58 @@ func (p *OpenAIResponsesProvider) Stream(ctx context.Context, req core.ProviderR
 					if id != "" && callID != "" && name != "" {
 						itemToCall[id] = callID
 						hasFunctionCall = true
-						out <- core.ProviderStreamEvent{Type: "tool_use_start", ID: callID, Name: name}
+						if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "tool_use_start", ID: callID, Name: name}) {
+							return
+						}
 					}
 				}
 			case "response.output_text.delta":
 				if d, ok := ev["delta"].(string); ok {
-					out <- core.ProviderStreamEvent{Type: "text_delta", Text: d}
+					if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "text_delta", Text: d}) {
+						return
+					}
+				}
+			case "response.reasoning_summary_text.delta":
+				if d, ok := ev["delta"].(string); ok {
+					if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "thinking_delta", Text: d}) {
+						return
+					}
 				}
 			case "response.function_call_arguments.delta":
 				itemID, _ := ev["item_id"].(string)
 				if d, ok := ev["delta"].(string); ok {
-					out <- core.ProviderStreamEvent{Type: "tool_use_input_delta", ID: itemToCall[itemID], JSONDelta: d}
+					if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "tool_use_input_delta", ID: itemToCall[itemID], JSONDelta: d}) {
+						return
+					}
 				}
 			case "response.output_item.done":
 				item, _ := ev["item"].(map[string]interface{})
+				outputItems = upsertResponseOutputItem(outputItems, item)
 				if item["type"] == "function_call" {
 					id, _ := item["id"].(string)
-					out <- core.ProviderStreamEvent{Type: "tool_use_end", ID: itemToCall[id]}
+					if !sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "tool_use_end", ID: itemToCall[id]}) {
+						return
+					}
 				}
 			case "response.completed", "response.incomplete", "response.failed":
 				resp, _ := ev["response"].(map[string]interface{})
+				responseID = firstString(responseID, stringValue(resp["id"]))
+				if rawOutput, ok := resp["output"].([]interface{}); ok {
+					outputItems = responseOutputItems(rawOutput)
+				}
 				if u, ok := resp["usage"].(map[string]interface{}); ok {
 					usage = core.Usage{InputTokens: intNum(u["input_tokens"]), OutputTokens: intNum(u["output_tokens"])}
 				}
-				status, _ := resp["status"].(string)
-				if status == "completed" && hasFunctionCall {
-					stop = core.StopToolUse
-				} else if status == "completed" {
-					stop = core.StopEndTurn
-				} else {
-					stop = core.StopError
-				}
+				stop = mapResponsesStop(resp, hasFunctionCall)
 			}
 		}
-		if err := <-wireErrs; err != nil {
-			errs <- err
-			return
+		meta := core.MessageProviderMetadata{}
+		if responseID != "" || len(outputItems) > 0 {
+			meta.OpenAIResponses = &core.OpenAIResponsesMetadata{ResponseID: responseID, OutputItems: outputItems}
 		}
-		out <- core.ProviderStreamEvent{Type: "message_end", StopReason: stop, Usage: usage}
+		sendProviderEvent(ctx, out, core.ProviderStreamEvent{Type: "message_end", StopReason: stop, Usage: usage, ProviderMetadata: meta})
 	}()
-	return out, errs
+	return out
 }
 
 func responsesTools(tools []core.ToolSchema) []map[string]interface{} {
@@ -116,8 +150,23 @@ func responsesTools(tools []core.ToolSchema) []map[string]interface{} {
 }
 
 func responsesInput(messages []core.Message) []map[string]interface{} {
+	input, _ := responsesInputAndPrevious(messages)
+	return input
+}
+
+func responsesInputAndPrevious(messages []core.Message) ([]map[string]interface{}, string) {
 	var out []map[string]interface{}
+	previousResponseID := ""
 	for _, msg := range messages {
+		if meta := msg.ProviderMetadata.OpenAIResponses; meta != nil {
+			if meta.ResponseID != "" {
+				previousResponseID = meta.ResponseID
+				out = nil
+			}
+			if len(meta.OutputItems) > 0 {
+				out = append(out, cloneResponseItems(meta.OutputItems)...)
+			}
+		}
 		if msg.Role == "assistant" {
 			text := ""
 			for _, b := range msg.Content {
@@ -147,5 +196,103 @@ func responsesInput(messages []core.Message) []map[string]interface{} {
 			out = append(out, map[string]interface{}{"type": "message", "role": "user", "content": parts})
 		}
 	}
+	return out, previousResponseID
+}
+
+func responsesReasoning(thinking map[string]interface{}, effort string) map[string]interface{} {
+	if len(thinking) > 0 {
+		out := make(map[string]interface{}, len(thinking))
+		for k, v := range thinking {
+			out[k] = v
+		}
+		return out
+	}
+	if effort == "" {
+		return nil
+	}
+	return map[string]interface{}{"effort": effort, "summary": "auto"}
+}
+
+func mapResponsesStop(resp map[string]interface{}, hasFunctionCall bool) core.StopReason {
+	status, _ := resp["status"].(string)
+	if status == "completed" && hasFunctionCall {
+		return core.StopToolUse
+	}
+	if status == "completed" {
+		return core.StopEndTurn
+	}
+	if status == "incomplete" {
+		if details, ok := resp["incomplete_details"].(map[string]interface{}); ok {
+			switch details["reason"] {
+			case "max_output_tokens":
+				return core.StopMaxTokens
+			case "content_filter":
+				return core.StopRefusal
+			}
+		}
+		return core.StopMaxTokens
+	}
+	if status == "failed" {
+		return core.StopError
+	}
+	return core.StopError
+}
+
+func responseOutputItems(raw []interface{}) []map[string]interface{} {
+	items := make([]map[string]interface{}, 0, len(raw))
+	for _, value := range raw {
+		if item, ok := value.(map[string]interface{}); ok {
+			items = upsertResponseOutputItem(items, item)
+		}
+	}
+	return items
+}
+
+func upsertResponseOutputItem(items []map[string]interface{}, item map[string]interface{}) []map[string]interface{} {
+	if item == nil {
+		return items
+	}
+	id := stringValue(item["id"])
+	cloned := cloneMap(item)
+	if id == "" {
+		return append(items, cloned)
+	}
+	for i, existing := range items {
+		if stringValue(existing["id"]) == id {
+			items[i] = cloned
+			return items
+		}
+	}
+	return append(items, cloned)
+}
+
+func cloneResponseItems(items []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		out = append(out, cloneMap(item))
+	}
 	return out
+}
+
+func cloneMap(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = cloneJSONValue(v)
+	}
+	return out
+}
+
+func cloneJSONValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return cloneMap(v)
+	case []interface{}:
+		out := make([]interface{}, len(v))
+		for i := range v {
+			out[i] = cloneJSONValue(v[i])
+		}
+		return out
+	default:
+		return v
+	}
 }

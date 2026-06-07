@@ -61,14 +61,24 @@ func staticBase(pattern string) (base string, rest string) {
 func (t GlobTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
 	root := ctx.CWD
 	if p, ok := asString(input["path"]); ok && p != "" {
-		root = resolvePath(p, ctx.CWD)
+		resolved, err := resolveFilesystem(ctx, p, core.FilesystemResolveSearch)
+		if err != nil {
+			return core.ToolResult{Content: "Glob error: " + err.Error(), Summary: "glob error", IsError: true}, nil
+		}
+		root = resolved
+	} else if _, err := resolveFilesystem(ctx, ".", core.FilesystemResolveSearch); err != nil {
+		return core.ToolResult{Content: "Glob error: " + err.Error(), Summary: "glob error", IsError: true}, nil
 	}
 	pattern := filepath.ToSlash(input["pattern"].(string))
 	searchRoot := root
 
 	if filepath.IsAbs(pattern) {
 		base, rest := staticBase(pattern)
-		searchRoot = base
+		resolved, err := resolveFilesystem(ctx, base, core.FilesystemResolveSearch)
+		if err != nil {
+			return core.ToolResult{Content: "Glob error: " + err.Error(), Summary: "glob error", IsError: true}, nil
+		}
+		searchRoot = resolved
 		pattern = rest
 	}
 

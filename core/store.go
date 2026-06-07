@@ -67,6 +67,9 @@ type TaskPatch struct {
 	Delete          bool                   `json:"delete,omitempty"`
 }
 
+// SessionStore persists sessions, messages, and task state. Implementations
+// must be safe for concurrent use by multiple sessions and must honor context
+// cancellation for blocking I/O where possible.
 type SessionStore interface {
 	Create(ctx context.Context, id string, meta map[string]interface{}) (SessionRecord, error)
 	Load(ctx context.Context, id string) (SessionRecord, bool, error)

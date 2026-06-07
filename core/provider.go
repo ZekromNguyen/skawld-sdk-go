@@ -49,16 +49,35 @@ type ProviderStreamResult struct {
 
 type ProviderStream <-chan ProviderStreamResult
 
+// Provider identifies a model provider and its context window.
+//
+// Provider values supplied through AgentOptions.Provider may be used by
+// multiple sessions and parent/subagent runs concurrently, so shared provider
+// implementations must be safe for concurrent Stream calls. If a provider has
+// mutable per-run state and is not safe to share, supply a ProviderFactory so
+// each subagent can receive its own provider instance.
 type Provider interface {
 	ID() string
 	ContextWindow(model ModelID) int
 }
 
+// ProviderFactory creates a provider for a run owner such as a parent agent or
+// subagent. Use it when a provider implementation is not safe to share across
+// concurrent Stream calls.
+type ProviderFactory interface {
+	NewProvider() Provider
+}
+
+// StreamingProvider streams normalized provider events. Stream must return
+// promptly when ctx is canceled and must not block indefinitely if the caller
+// stops consuming the returned stream.
 type StreamingProvider interface {
 	Provider
 	Stream(ctx context.Context, req ProviderRequest) ProviderStream
 }
 
+// LegacyStreamingProvider is the pre-single-stream contract kept for
+// compatibility. New providers should implement StreamingProvider.
 type LegacyStreamingProvider interface {
 	Provider
 	Stream(ctx context.Context, req ProviderRequest) (<-chan ProviderStreamEvent, <-chan error)

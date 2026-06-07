@@ -293,6 +293,102 @@ func TestSubagentCancellationStopsChildEvents(t *testing.T) {
 	}
 }
 
+type factoryProvider struct {
+	id      int
+	factory *recordingProviderFactory
+	calls   int
+}
+
+func (p *factoryProvider) ID() string { return "factory-provider" }
+func (p *factoryProvider) ContextWindow(model core.ModelID) int {
+	return 100000
+}
+func (p *factoryProvider) Stream(ctx context.Context, req core.ProviderRequest) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult)
+	p.calls++
+	call := p.calls
+	p.factory.mu.Lock()
+	p.factory.requestProviderIDs = append(p.factory.requestProviderIDs, p.id)
+	p.factory.mu.Unlock()
+	go func() {
+		defer close(out)
+		send := func(ev core.ProviderStreamEvent) {
+			select {
+			case out <- core.ProviderStreamResult{Event: ev}:
+			case <-ctx.Done():
+			}
+		}
+		send(core.ProviderStreamEvent{Type: "message_start", Model: req.Model})
+		if p.id == 1 && call == 1 {
+			send(core.ProviderStreamEvent{Type: "tool_use_start", ID: "sub_1", Name: "Subagent"})
+			send(core.ProviderStreamEvent{Type: "tool_use_input_delta", ID: "sub_1", JSONDelta: `{"agent":"default","task":"child"}`})
+			send(core.ProviderStreamEvent{Type: "tool_use_end", ID: "sub_1"})
+			send(core.ProviderStreamEvent{Type: "message_end", StopReason: core.StopToolUse})
+			return
+		}
+		if p.id == 1 {
+			send(core.ProviderStreamEvent{Type: "text_delta", Text: "parent done"})
+		} else {
+			send(core.ProviderStreamEvent{Type: "text_delta", Text: "child done"})
+		}
+		send(core.ProviderStreamEvent{Type: "message_end", StopReason: core.StopEndTurn})
+	}()
+	return out
+}
+
+type recordingProviderFactory struct {
+	mu                 sync.Mutex
+	nextID             int
+	requestProviderIDs []int
+}
+
+func (f *recordingProviderFactory) NewProvider() core.Provider {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	return &factoryProvider{id: f.nextID, factory: f}
+}
+
+func TestSubagentUsesProviderFactoryForChildAgent(t *testing.T) {
+	factory := &recordingProviderFactory{}
+	parentProvider := factory.NewProvider()
+	agent, err := NewAgent(AgentOptions{
+		Provider:        parentProvider,
+		ProviderFactory: factory,
+		Model:           "fake-model",
+		Permissions:     PermissionOptions{Mode: PermissionModeYolo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawChild bool
+	for ev := range session.Run(context.Background(), "delegate", RunOptions{}) {
+		if ev.Type == EventSubagent {
+			if child, ok := ev.Delta["event"].(core.Event); ok && child.Type == EventResult && child.FinalText == "child done" {
+				sawChild = true
+			}
+		}
+	}
+	if !sawChild {
+		t.Fatal("expected child subagent result")
+	}
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	if len(factory.requestProviderIDs) < 3 {
+		t.Fatalf("expected parent and child provider requests, got %+v", factory.requestProviderIDs)
+	}
+	if factory.requestProviderIDs[0] != 1 {
+		t.Fatalf("expected parent run to use initial provider, got %+v", factory.requestProviderIDs)
+	}
+	if factory.requestProviderIDs[1] == 1 {
+		t.Fatalf("expected child run to use a factory-created provider, got %+v", factory.requestProviderIDs)
+	}
+}
+
 type singleTextProvider struct {
 	mu       sync.Mutex
 	requests []core.ProviderRequest

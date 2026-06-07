@@ -21,13 +21,18 @@ type PermissionOptions struct {
 	CanUseTool permissions.CanUseTool
 }
 
+// AgentOptions configures an Agent. NewAgent clones the supplied Tools
+// registry before adding runtime tools, so callers keep ownership of their
+// registry after construction.
 type AgentOptions struct {
 	Provider               core.Provider
+	ProviderFactory        core.ProviderFactory
 	Model                  core.ModelID
 	Tools                  *tools.Registry
 	Permissions            PermissionOptions
 	SessionStore           core.SessionStore
 	CWD                    string
+	FilesystemPolicy       tools.FilesystemPolicy
 	SystemPrompt           string
 	MaxRetries             int
 	MaxOutputTokens        *int
@@ -44,20 +49,27 @@ type AgentOptions struct {
 	DisableSubagents       bool
 }
 
+// Agent owns shared SDK runtime resources and can create multiple sessions
+// concurrently. Close should be called when MCP or store resources are no
+// longer needed.
 type Agent struct {
-	opts       AgentOptions
-	perm       *permissions.Engine
-	store      core.SessionStore
-	system     []core.SystemBlock
-	mcp        *mcp.Manager
-	skills     *skills.Manager
-	skillsTool bool
-	subagents  *subagents.Registry
-	subTool    bool
-	sessionsMu sync.Mutex
+	opts      AgentOptions
+	perm      *permissions.Engine
+	store     core.SessionStore
+	system    []core.SystemBlock
+	systemMu  sync.RWMutex
+	mcp       *mcp.Manager
+	skills    *skills.Manager
+	subagents *subagents.Registry
+	mcpMu     sync.Mutex
+	skillsMu  sync.Mutex
+	subMu     sync.Mutex
 }
 
 func NewAgent(opts AgentOptions) (*Agent, error) {
+	if opts.Provider == nil && opts.ProviderFactory != nil {
+		opts.Provider = opts.ProviderFactory.NewProvider()
+	}
 	if opts.Provider == nil {
 		return nil, core.NewConfigError("Agent requires a provider")
 	}
@@ -69,6 +81,8 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	}
 	if opts.Tools == nil {
 		opts.Tools = tools.DefaultTools()
+	} else {
+		opts.Tools = opts.Tools.Clone()
 	}
 	if opts.CWD == "" {
 		cwd, _ := os.Getwd()
@@ -125,18 +139,6 @@ type SessionOptions struct {
 }
 
 func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, error) {
-	a.sessionsMu.Lock()
-	defer a.sessionsMu.Unlock()
-	if err := a.connectMCP(ctx); err != nil {
-		return nil, err
-	}
-	if err := a.loadSubagents(); err != nil {
-		return nil, err
-	}
-	skillEvents, err := a.loadSkills()
-	if err != nil {
-		return nil, err
-	}
 	rec, err := a.store.Create(ctx, opts.ID, opts.Meta)
 	if err != nil {
 		return nil, err
@@ -154,26 +156,62 @@ func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, err
 	for _, sm := range stored {
 		view = append(view, sm.Message)
 	}
-	return newSession(a, rec, view, skillEvents), nil
+	return newSession(a, rec, view, nil), nil
+}
+
+func (a *Agent) loadRuntime(ctx context.Context) ([]core.Event, error) {
+	runtimeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		events []core.Event
+		err    error
+	}
+	results := make(chan result, 3)
+	go func() {
+		results <- result{err: a.connectMCP(runtimeCtx)}
+	}()
+	go func() {
+		results <- result{err: a.loadSubagents()}
+	}()
+	go func() {
+		events, err := a.loadSkills()
+		results <- result{events: events, err: err}
+	}()
+
+	var events []core.Event
+	var firstErr error
+	for i := 0; i < 3; i++ {
+		res := <-results
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+			cancel()
+		}
+		if firstErr == nil {
+			events = append(events, res.events...)
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return events, nil
 }
 
 func (a *Agent) loadSubagents() error {
 	if a.subagents == nil {
 		return nil
 	}
+	a.subMu.Lock()
 	if err := a.subagents.Load(); err != nil {
+		a.subMu.Unlock()
 		return err
 	}
-	if !a.subTool {
-		if _, exists := a.opts.Tools.Get("Subagent"); exists {
-			a.subTool = true
-		} else {
-			if err := a.opts.Tools.Register(subagents.Tool{Registry: a.subagents}); err != nil {
-				return err
-			}
-			a.subTool = true
+	if _, exists := a.opts.Tools.Get("Subagent"); !exists {
+		if err := a.opts.Tools.Register(subagents.Tool{Registry: a.subagents}); err != nil {
+			a.subMu.Unlock()
+			return err
 		}
 	}
+	a.subMu.Unlock()
 	a.rebuildSystem()
 	return nil
 }
@@ -191,12 +229,18 @@ func (a *Agent) Close() error {
 	return mcpErr
 }
 
-func (a *Agent) Options() AgentOptions { return a.opts }
+func (a *Agent) Options() AgentOptions {
+	opts := a.opts
+	opts.Tools = a.opts.Tools.Clone()
+	return opts
+}
 
 func (a *Agent) connectMCP(ctx context.Context) error {
 	if a.mcp == nil {
 		return nil
 	}
+	a.mcpMu.Lock()
+	defer a.mcpMu.Unlock()
 	discovered, err := a.mcp.Connect(ctx, a.opts.Tools.Names())
 	if err != nil {
 		return err
@@ -217,24 +261,25 @@ func (a *Agent) loadSkills() ([]core.Event, error) {
 	if a.skills == nil {
 		return nil, nil
 	}
+	a.skillsMu.Lock()
 	wasLoaded := a.skills.Loaded()
 	if err := a.skills.Load(); err != nil {
+		a.skillsMu.Unlock()
 		return nil, err
 	}
 	defs := a.skills.Definitions()
 	if len(defs) == 0 {
+		a.skillsMu.Unlock()
 		return nil, nil
 	}
-	if !a.skillsTool {
-		if _, exists := a.opts.Tools.Get("Skill"); exists {
-			a.skillsTool = true
-		} else {
-			if err := a.opts.Tools.Register(skills.Tool{Manager: a.skills}); err != nil {
-				return nil, err
-			}
-			a.skillsTool = true
+	if _, exists := a.opts.Tools.Get("Skill"); !exists {
+		if err := a.opts.Tools.Register(skills.Tool{Manager: a.skills}); err != nil {
+			a.skillsMu.Unlock()
+			return nil, err
 		}
 	}
+	names := a.skills.Names()
+	a.skillsMu.Unlock()
 	a.rebuildSystem()
 	if wasLoaded {
 		return nil, nil
@@ -242,21 +287,44 @@ func (a *Agent) loadSkills() ([]core.Event, error) {
 	return []core.Event{{
 		Type: core.EventSkillsLoaded,
 		Delta: map[string]interface{}{
-			"skills": a.skills.Names(),
+			"skills": names,
 		},
 	}}, nil
 }
 
 func (a *Agent) rebuildSystem() {
-	a.system = buildSystemBlocks(a.opts.CWD, a.opts.Permissions.Mode, a.opts.Tools.Names(), a.opts.SystemPrompt)
+	next := buildSystemBlocks(a.opts.CWD, a.opts.Permissions.Mode, a.opts.Tools.Names(), a.opts.SystemPrompt)
+	a.subMu.Lock()
 	if a.subagents != nil && a.subagents.Loaded() {
 		if listing := subagentListingPrompt(a.subagents.Definitions()); listing != "" {
-			a.system = append(a.system, core.SystemBlock{Type: "text", Text: listing, Cacheable: true})
+			next = append(next, core.SystemBlock{Type: "text", Text: listing, Cacheable: true})
 		}
 	}
+	a.subMu.Unlock()
+	a.skillsMu.Lock()
 	if a.skills != nil && a.skills.Loaded() {
 		if listing := skills.ListingPrompt(a.skills.Definitions()); listing != "" {
-			a.system = append(a.system, core.SystemBlock{Type: "text", Text: listing, Cacheable: true})
+			next = append(next, core.SystemBlock{Type: "text", Text: listing, Cacheable: true})
 		}
 	}
+	a.skillsMu.Unlock()
+	a.systemMu.Lock()
+	a.system = next
+	a.systemMu.Unlock()
+}
+
+func (a *Agent) systemBlocks() []core.SystemBlock {
+	a.systemMu.RLock()
+	defer a.systemMu.RUnlock()
+	return append([]core.SystemBlock(nil), a.system...)
+}
+
+func (a *Agent) providerForSubagent() core.Provider {
+	if a.opts.ProviderFactory != nil {
+		provider := a.opts.ProviderFactory.NewProvider()
+		if provider != nil {
+			return provider
+		}
+	}
+	return a.opts.Provider
 }

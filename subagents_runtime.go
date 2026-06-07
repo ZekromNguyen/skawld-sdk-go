@@ -57,12 +57,14 @@ func (s *Session) runSubagent(ctx context.Context, inv core.SubagentInvocation, 
 	}
 	started := time.Now()
 	child, err := NewAgent(AgentOptions{
-		Provider:               s.agent.opts.Provider,
+		Provider:               s.agent.providerForSubagent(),
+		ProviderFactory:        s.agent.opts.ProviderFactory,
 		Model:                  model,
 		Tools:                  reg,
 		Permissions:            s.agent.opts.Permissions,
 		SessionStore:           sessions.NewInMemoryStore(),
 		CWD:                    s.agent.opts.CWD,
+		FilesystemPolicy:       s.agent.opts.FilesystemPolicy,
 		SystemPrompt:           def.SystemPrompt,
 		MaxRetries:             s.agent.opts.MaxRetries,
 		MaxOutputTokens:        s.agent.opts.MaxOutputTokens,

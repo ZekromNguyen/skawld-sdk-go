@@ -138,7 +138,13 @@ func (t GrepTool) Execute(input map[string]interface{}, ctx core.ToolContext) (c
 	rootRaw, _ := asString(input["path"])
 	searchRoot := ctx.CWD
 	if rootRaw != "" {
-		searchRoot = resolvePath(rootRaw, ctx.CWD)
+		resolved, err := resolveFilesystem(ctx, rootRaw, core.FilesystemResolveSearch)
+		if err != nil {
+			return core.ToolResult{Content: "Grep error: " + err.Error(), Summary: "grep error", IsError: true}, nil
+		}
+		searchRoot = resolved
+	} else if _, err := resolveFilesystem(ctx, ".", core.FilesystemResolveSearch); err != nil {
+		return core.ToolResult{Content: "Grep error: " + err.Error(), Summary: "grep error", IsError: true}, nil
 	}
 	headLimit := input["head_limit"].(int)
 

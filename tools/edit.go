@@ -52,7 +52,10 @@ func (t EditTool) Summarize(input map[string]interface{}) string {
 	return fmt.Sprintf("Edit %s (%s)", input["file_path"], mode)
 }
 func (t EditTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	path := resolvePath(input["file_path"].(string), ctx.CWD)
+	path, err := resolveFilesystem(ctx, input["file_path"].(string), core.FilesystemResolveWrite)
+	if err != nil {
+		return core.ToolResult{Content: "Error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
+	}
 	if !ctx.FileReadTracker.HasRead(path) {
 		return core.ToolResult{Content: "Error: You must Read this file before editing it.", Summary: t.Summarize(input), IsError: true}, nil
 	}

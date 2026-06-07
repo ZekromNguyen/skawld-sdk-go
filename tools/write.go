@@ -39,7 +39,10 @@ func (t WriteTool) Summarize(input map[string]interface{}) string {
 	return fmt.Sprintf("Write %dB to %s", len([]byte(input["content"].(string))), input["file_path"])
 }
 func (t WriteTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	path := resolvePath(input["file_path"].(string), ctx.CWD)
+	path, err := resolveFilesystem(ctx, input["file_path"].(string), core.FilesystemResolveWrite)
+	if err != nil {
+		return core.ToolResult{Content: "Error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
+	}
 	if _, err := os.Stat(path); err == nil && !ctx.FileReadTracker.HasRead(path) {
 		return core.ToolResult{Content: "Error: file exists and has not been Read in this session.", Summary: t.Summarize(input), IsError: true}, nil
 	}

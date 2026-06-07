@@ -51,7 +51,10 @@ func (t ReadTool) Summarize(input map[string]interface{}) string {
 }
 
 func (t ReadTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	path := resolvePath(input["file_path"].(string), ctx.CWD)
+	path, err := resolveFilesystem(ctx, input["file_path"].(string), core.FilesystemResolveRead)
+	if err != nil {
+		return core.ToolResult{Content: "Error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
+	}
 	if isDevicePath(path) {
 		return core.ToolResult{Content: "Error: device path cannot be read.", Summary: t.Summarize(input), IsError: true}, nil
 	}

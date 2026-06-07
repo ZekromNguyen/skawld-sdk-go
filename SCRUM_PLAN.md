@@ -360,7 +360,7 @@ work. It continues after the completed migration plan and keeps the same
 Scrum-aligned structure: implementation tasks, testing tasks, and acceptance
 criteria for each increment.
 
-Status updated after Sprint 11 implementation on 2026-06-07.
+Status updated after Sprint 12 implementation on 2026-06-07.
 
 ## Phase 10: Run Lifecycle And Provider Stream Safety
 
@@ -498,38 +498,42 @@ Goal: clarify ownership boundaries and reduce unsafe shared mutable state.
 
 Implementation tasks:
 
-- [ ] Clone caller-provided tool registries in `NewAgent`.
-- [ ] Stop lazy MCP, Skill, and Subagent registration from mutating
+- [x] Clone caller-provided tool registries in `NewAgent`.
+- [x] Stop lazy MCP, Skill, and Subagent registration from mutating
       caller-owned registries.
-- [ ] Reduce `Agent.Session` lock scope so slow MCP connections and filesystem
+- [x] Reduce `Agent.Session` lock scope so slow MCP connections and filesystem
       loads do not block unrelated session creation.
-- [ ] Replace broad runtime loading locks with explicit once/state guards.
-- [ ] Add a documented provider concurrency contract.
-- [ ] Add a provider factory or clone hook for custom providers that are not
+- [x] Replace broad runtime loading locks with explicit per-resource state
+      guards.
+- [x] Add a documented provider concurrency contract.
+- [x] Add a provider factory or clone hook for custom providers that are not
       safe for concurrent streams.
-- [ ] Add Go doc comments describing concurrency guarantees for `Agent`,
+- [x] Add Go doc comments describing concurrency guarantees for `Agent`,
       `Session`, `Provider`, `Tool`, `Registry`, and `SessionStore`.
-- [ ] Add configurable filesystem root policy for read, write, edit, glob, and
+- [x] Add configurable filesystem root policy for read, write, edit, glob, and
       grep tools.
-- [ ] Define symlink handling and absolute-path behavior for filesystem tools.
+- [x] Define symlink handling and absolute-path behavior for filesystem tools.
 
 Testing tasks:
 
-- [ ] Add tests proving external registries are unchanged after agent runtime
+- [x] Add tests proving external registries are unchanged after agent runtime
       loading.
-- [ ] Add concurrent session creation tests with slow MCP and skill loaders.
-- [ ] Add race tests for parent and subagent provider use.
-- [ ] Add filesystem policy tests for allowed roots, denied roots, absolute
+- [x] Add concurrent session creation tests with slow MCP and skill loaders.
+- [x] Add race-focused tests for parent and subagent provider use.
+- [x] Add filesystem policy tests for allowed roots, denied roots, absolute
       paths, and symlink cases.
 - [ ] Run `go test -race ./...` for affected packages.
+      Blocked locally on 2026-06-07: race builds require CGO and `gcc` is not
+      installed in this Windows environment. Verified affected coverage with
+      `go test .`, `go test ./tools`, and `go test ./...`.
 
 Acceptance criteria:
 
-- [ ] Agent runtime loading cannot mutate a registry still owned by the caller.
-- [ ] Multiple sessions can be created without serializing on slow runtime
+- [x] Agent runtime loading cannot mutate a registry still owned by the caller.
+- [x] Multiple sessions can be created without serializing on slow runtime
       resource loading.
-- [ ] Provider concurrency expectations are explicit and tested.
-- [ ] Embedded/server users can restrict filesystem tools to approved roots.
+- [x] Provider concurrency expectations are explicit and tested.
+- [x] Embedded/server users can restrict filesystem tools to approved roots.
 
 ## Phase 14: Performance Hot Paths And Memory Efficiency
 
@@ -703,9 +707,9 @@ Sprint 11:
 
 Sprint 12:
 
-- [ ] Phase 13 runtime ownership and registry isolation
-- [ ] Phase 13 provider concurrency contract
-- [ ] Phase 13 filesystem root policy
+- [x] Phase 13 runtime ownership and registry isolation
+- [x] Phase 13 provider concurrency contract
+- [x] Phase 13 filesystem root policy
 
 Sprint 13:
 

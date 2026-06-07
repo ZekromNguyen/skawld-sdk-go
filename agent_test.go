@@ -3,6 +3,11 @@ package skawld
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,7 +15,9 @@ import (
 
 	"github.com/skawld/skawld-sdk-go/core"
 	"github.com/skawld/skawld-sdk-go/permissions"
+	"github.com/skawld/skawld-sdk-go/sessions"
 	"github.com/skawld/skawld-sdk-go/tools"
+	"github.com/skawld/skawld-sdk-go/tools/mcp"
 )
 
 type fakeProvider struct {
@@ -990,6 +997,206 @@ func TestNonParallelToolsRemainSerialized(t *testing.T) {
 	}
 	if atomic.LoadInt32(&maxActive) != 1 {
 		t.Fatalf("expected no overlap for serial tools, max active = %d", maxActive)
+	}
+}
+
+func TestAgentRuntimeLoadingDoesNotMutateCallerRegistry(t *testing.T) {
+	dir := t.TempDir()
+	skillsDir := filepath.Join(dir, "skills")
+	if err := os.MkdirAll(filepath.Join(skillsDir, "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "review", "SKILL.md"), []byte("---\ndescription: Review\n---\nReview."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "review.md"), []byte("---\nname: review\n---\nReview."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	callerRegistry := tools.NewRegistry()
+	agent, err := NewAgent(AgentOptions{
+		Provider:    &singleTextProvider{text: "done"},
+		Model:       "fake-model",
+		Tools:       callerRegistry,
+		SkillsDir:   skillsDir,
+		AgentsDir:   agentsDir,
+		Permissions: PermissionOptions{Mode: PermissionModeYolo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Run(context.Background(), "load runtime", RunOptions{}) {
+	}
+	if _, ok := callerRegistry.Get("Skill"); ok {
+		t.Fatal("caller registry was mutated with Skill tool")
+	}
+	if _, ok := callerRegistry.Get("Subagent"); ok {
+		t.Fatal("caller registry was mutated with Subagent tool")
+	}
+	if _, ok := agent.opts.Tools.Get("Skill"); !ok {
+		t.Fatal("agent registry did not receive Skill tool")
+	}
+	if _, ok := agent.opts.Tools.Get("Subagent"); !ok {
+		t.Fatal("agent registry did not receive Subagent tool")
+	}
+}
+
+type slowStore struct {
+	*sessions.InMemoryStore
+	started chan struct{}
+	release chan struct{}
+}
+
+func newSlowStore() *slowStore {
+	return &slowStore{InMemoryStore: sessions.NewInMemoryStore(), started: make(chan struct{}, 2), release: make(chan struct{})}
+}
+
+func (s *slowStore) Create(ctx context.Context, id string, meta map[string]interface{}) (core.SessionRecord, error) {
+	s.started <- struct{}{}
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return core.SessionRecord{}, ctx.Err()
+	}
+	return s.InMemoryStore.Create(ctx, id, meta)
+}
+
+func TestAgentSessionCreationDoesNotSerializeOnStoreWork(t *testing.T) {
+	store := newSlowStore()
+	agent, err := NewAgent(AgentOptions{
+		Provider:          &singleTextProvider{text: "done"},
+		Model:             "fake-model",
+		SessionStore:      store,
+		DisableSkills:     true,
+		DisableSubagents:  true,
+		DisableCompaction: true,
+		Permissions:       PermissionOptions{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			_, err := agent.Session(ctx, SessionOptions{ID: fmt.Sprintf("s%d", i)})
+			errs <- err
+		}(i)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-store.started:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("session creation serialized before store work could start concurrently")
+		}
+	}
+	close(store.release)
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAgentSessionCreationDoesNotConnectSlowMCP(t *testing.T) {
+	requested := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requested <- struct{}{}:
+		default:
+		}
+		<-release
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	defer close(release)
+	agent, err := NewAgent(AgentOptions{
+		Provider:   &singleTextProvider{text: "done"},
+		Model:      "fake-model",
+		MCPServers: []mcp.ServerConfig{{Name: "slow", HTTP: &mcp.HTTPServerConfig{URL: server.URL}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := agent.Session(ctx, SessionOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requested:
+		t.Fatal("Session connected MCP during session creation")
+	default:
+	}
+}
+
+func TestRuntimeLoadingDoesNotSerializeSkillsAndSubagentsBehindSlowMCP(t *testing.T) {
+	dir := t.TempDir()
+	skillsDir := filepath.Join(dir, "skills")
+	if err := os.MkdirAll(filepath.Join(skillsDir, "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "review", "SKILL.md"), []byte("---\ndescription: Review\n---\nReview."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "review.md"), []byte("---\nname: review\n---\nReview."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	requested := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requested <- struct{}{}:
+		default:
+		}
+		<-release
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	agent, err := NewAgent(AgentOptions{
+		Provider:    &singleTextProvider{text: "done"},
+		Model:       "fake-model",
+		SkillsDir:   skillsDir,
+		AgentsDir:   agentsDir,
+		MCPServers:  []mcp.ServerConfig{{Name: "slow", HTTP: &mcp.HTTPServerConfig{URL: server.URL}}},
+		Permissions: PermissionOptions{Mode: PermissionModeYolo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := session.StartRun(context.Background(), "load runtime", RunOptions{})
+	defer handle.Close()
+	select {
+	case <-requested:
+	case <-time.After(time.Second):
+		t.Fatal("MCP server was not contacted")
+	}
+	waitFor(t, time.Second, func() bool {
+		_, skill := agent.opts.Tools.Get("Skill")
+		_, subagent := agent.opts.Tools.Get("Subagent")
+		return skill && subagent
+	})
+	close(release)
+	for range handle.Events() {
 	}
 }
 

@@ -49,8 +49,18 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 	runID := id.New()
 	total := core.Usage{}
 	agent := s.agent
+	initialEvents, err := agent.loadRuntime(ctx)
+	if err != nil {
+		emitRunError(emitter, err, total, started)
+		return
+	}
 	if !emitter.Emit(core.Event{Type: core.EventSystem, Subtype: "init", SessionID: s.ID, RunID: runID, Model: agent.opts.Model, Tools: agent.opts.Tools.Names(), PermissionMode: agent.opts.Permissions.Mode, CWD: agent.opts.CWD}) {
 		return
+	}
+	for _, ev := range initialEvents {
+		if !emitter.Emit(ev) {
+			return
+		}
 	}
 	for _, ev := range s.consumeInitialEvents() {
 		if !emitter.Emit(ev) {
@@ -156,7 +166,7 @@ func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions, ove
 	msgs := append([]core.Message(nil), s.providerView...)
 	s.providerMu.Unlock()
 	model := s.agent.opts.Model
-	system := append([]core.SystemBlock(nil), s.agent.system...)
+	system := s.agent.systemBlocks()
 	if overlay != nil {
 		if overlay.Model != "" {
 			model = overlay.Model
@@ -412,7 +422,7 @@ func (s *Session) executePreparedToolCall(ctx context.Context, runID string, cal
 	}
 	start := time.Now()
 	res, err := call.tool.Execute(call.input, core.ToolContext{
-		Context: ctx, CWD: s.agent.opts.CWD, FileReadTracker: s.readTracker,
+		Context: ctx, CWD: s.agent.opts.CWD, Filesystem: s.agent.opts.FilesystemPolicy, FileReadTracker: s.readTracker,
 		SessionID: s.ID, RunID: runID, SessionStore: s.store,
 		Emit: func(ev core.Event) { _ = emitter.Emit(ev) },
 		InvokeSkill: func(skillCtx context.Context, inv core.SkillInvocation) (core.ToolResult, error) {

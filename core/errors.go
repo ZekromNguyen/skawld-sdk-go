@@ -55,6 +55,10 @@ func NewToolExecutionError(tool, message string) *SkawldError {
 	return &SkawldError{Kind: ErrorToolExecution, Message: message, ToolName: tool}
 }
 
+func NewPermissionError(message string) *SkawldError {
+	return &SkawldError{Kind: ErrorPermissionDenied, Message: message}
+}
+
 func NewProviderError(message string, status int, retryable bool, cause error) *SkawldError {
 	return &SkawldError{Kind: ErrorProvider, Message: message, Status: status, Retryable: retryable, Cause: cause}
 }

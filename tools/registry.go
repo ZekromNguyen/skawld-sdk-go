@@ -3,11 +3,16 @@ package tools
 import (
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
 
+// Registry stores tools by name. Registry methods are safe for concurrent use;
+// cloning a registry transfers tool membership without copying the tool values
+// themselves.
 type Registry struct {
+	mu    sync.RWMutex
 	items map[string]core.Tool
 	order []string
 }
@@ -21,6 +26,8 @@ func (r *Registry) Register(tool core.Tool) error {
 		return fmt.Errorf("tool is nil")
 	}
 	name := tool.Name()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.items[name]; exists {
 		return core.NewConfigError(fmt.Sprintf("tool %q already registered", name))
 	}
@@ -30,11 +37,15 @@ func (r *Registry) Register(tool core.Tool) error {
 }
 
 func (r *Registry) Get(name string) (core.Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.items[name]
 	return t, ok
 }
 
 func (r *Registry) List() []core.Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]core.Tool, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.items[name])
@@ -43,6 +54,8 @@ func (r *Registry) List() []core.Tool {
 }
 
 func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.items))
 	for name := range r.items {
 		names = append(names, name)
@@ -52,13 +65,28 @@ func (r *Registry) Names() []string {
 }
 
 func (r *Registry) Schemas() []core.ToolSchema {
-	out := make([]core.ToolSchema, 0, len(r.order))
-	for _, t := range r.List() {
+	tools := r.List()
+	out := make([]core.ToolSchema, 0, len(tools))
+	for _, t := range tools {
 		out = append(out, core.ToolSchema{
 			Name:        t.Name(),
 			Description: t.Description(),
 			InputSchema: t.InputSchema(),
 		})
+	}
+	return out
+}
+
+func (r *Registry) Clone() *Registry {
+	if r == nil {
+		return NewRegistry()
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := NewRegistry()
+	out.order = append(out.order, r.order...)
+	for name, tool := range r.items {
+		out.items[name] = tool
 	}
 	return out
 }

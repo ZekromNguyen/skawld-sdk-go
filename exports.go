@@ -3,6 +3,7 @@ package skawld
 import (
 	"github.com/skawld/skawld-sdk-go/core"
 	"github.com/skawld/skawld-sdk-go/permissions"
+	"github.com/skawld/skawld-sdk-go/tools"
 	"github.com/skawld/skawld-sdk-go/tools/mcp"
 )
 
@@ -22,9 +23,11 @@ type ProviderStreamEvent = core.ProviderStreamEvent
 type ProviderStreamResult = core.ProviderStreamResult
 type StreamingProvider = core.StreamingProvider
 type LegacyStreamingProvider = core.LegacyStreamingProvider
+type ProviderFactory = core.ProviderFactory
 type Tool = core.Tool
 type ToolResult = core.ToolResult
 type ToolContext = core.ToolContext
+type FilesystemPolicy = tools.FilesystemPolicy
 type SessionStore = core.SessionStore
 type PermissionRule = permissions.Rule
 type CanUseTool = permissions.CanUseTool

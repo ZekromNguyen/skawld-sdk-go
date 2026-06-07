@@ -24,6 +24,9 @@ type RunOptions struct {
 	Effort          string
 }
 
+// Session holds one conversation history. A Session permits one active run at
+// a time; metadata and run lifecycle methods are safe to call from concurrent
+// goroutines.
 type Session struct {
 	ID        string
 	CreatedAt time.Time
@@ -203,14 +206,15 @@ func (s *Session) compactProviderView(ctx context.Context, trigger string, emitt
 	messages := cloneMessages(s.providerView)
 	s.providerMu.Unlock()
 	messages = stripProviderOnlyCompactionMessages(messages)
-	tokensBefore := estimateProviderTokens(s.agent.system, s.agent.opts.Tools.Schemas(), messages)
+	system := s.agent.systemBlocks()
+	tokensBefore := estimateProviderTokens(system, s.agent.opts.Tools.Schemas(), messages)
 	if trigger == compactionTriggerProactive && !s.shouldCompactProactively(tokensBefore) {
 		return false, nil
 	}
 	result, err := strategy.Compact(ctx, CompactionRequest{
 		Provider:        s.agent.opts.Provider,
 		Model:           s.agent.opts.Model,
-		System:          append([]core.SystemBlock(nil), s.agent.system...),
+		System:          system,
 		Tools:           s.agent.opts.Tools.Schemas(),
 		Messages:        messages,
 		Trigger:         trigger,
@@ -226,7 +230,7 @@ func (s *Session) compactProviderView(ctx context.Context, trigger string, emitt
 		return false, err
 	}
 	next = injectSkillReplayMessages(next, skills)
-	tokensAfter := estimateProviderTokens(s.agent.system, s.agent.opts.Tools.Schemas(), next)
+	tokensAfter := estimateProviderTokens(system, s.agent.opts.Tools.Schemas(), next)
 	s.providerMu.Lock()
 	s.providerView = next
 	s.providerMu.Unlock()

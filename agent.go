@@ -137,16 +137,16 @@ func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, err
 	if err != nil {
 		return nil, err
 	}
-	rec, err := a.store.Create(opts.ID, opts.Meta)
+	rec, err := a.store.Create(ctx, opts.ID, opts.Meta)
 	if err != nil {
 		return nil, err
 	}
-	if loaded, ok, err := a.store.Load(rec.ID); err != nil {
+	if loaded, ok, err := a.store.Load(ctx, rec.ID); err != nil {
 		return nil, err
 	} else if ok {
 		rec = loaded
 	}
-	stored, err := a.store.LoadMessages(rec.ID)
+	stored, err := a.store.LoadMessages(ctx, rec.ID)
 	if err != nil {
 		return nil, err
 	}

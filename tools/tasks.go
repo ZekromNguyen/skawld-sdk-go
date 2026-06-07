@@ -50,7 +50,7 @@ func (t TaskCreateTool) Execute(input map[string]interface{}, ctx core.ToolConte
 	if m, ok := input["metadata"].(map[string]interface{}); ok {
 		in.Metadata = m
 	}
-	task, err := ctx.SessionStore.CreateTask(ctx.SessionID, in)
+	task, err := ctx.SessionStore.CreateTask(ctx.Context, ctx.SessionID, in)
 	if err != nil {
 		return core.ToolResult{Content: err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}
@@ -69,7 +69,7 @@ func (TaskListTool) Validate(raw map[string]interface{}) (map[string]interface{}
 }
 func (TaskListTool) Summarize(input map[string]interface{}) string { return "List tasks" }
 func (t TaskListTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	tasks, err := ctx.SessionStore.ListTasks(ctx.SessionID)
+	tasks, err := ctx.SessionStore.ListTasks(ctx.Context, ctx.SessionID)
 	if err != nil {
 		return core.ToolResult{Content: err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}
@@ -95,7 +95,7 @@ func (TaskGetTool) Summarize(input map[string]interface{}) string {
 	return "Get task #" + input["id"].(string)
 }
 func (t TaskGetTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	task, ok, err := ctx.SessionStore.GetTask(ctx.SessionID, input["id"].(string))
+	task, ok, err := ctx.SessionStore.GetTask(ctx.Context, ctx.SessionID, input["id"].(string))
 	if err != nil {
 		return core.ToolResult{Content: err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}
@@ -212,7 +212,7 @@ func (t TaskUpdateTool) Execute(input map[string]interface{}, ctx core.ToolConte
 	if del, ok := input["delete"].(bool); ok {
 		patch.Delete = del
 	}
-	task, ok, err := ctx.SessionStore.UpdateTask(ctx.SessionID, input["id"].(string), patch)
+	task, ok, err := ctx.SessionStore.UpdateTask(ctx.Context, ctx.SessionID, input["id"].(string), patch)
 	if err != nil {
 		return core.ToolResult{Content: err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}

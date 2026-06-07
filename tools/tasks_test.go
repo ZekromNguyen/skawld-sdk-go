@@ -11,7 +11,8 @@ import (
 
 func TestTaskUpdateToolSupportsEdgesMetadataAndDeletedStatus(t *testing.T) {
 	store := sessions.NewInMemoryStore()
-	a, err := store.CreateTask("s", core.CreateTaskInput{
+	ctx := context.Background()
+	a, err := store.CreateTask(ctx, "s", core.CreateTaskInput{
 		Subject:     "a",
 		Description: "",
 		Metadata:    map[string]interface{}{"drop": "old"},
@@ -19,11 +20,11 @@ func TestTaskUpdateToolSupportsEdgesMetadataAndDeletedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := store.CreateTask("s", core.CreateTaskInput{Subject: "b", Description: ""})
+	b, err := store.CreateTask(ctx, "s", core.CreateTaskInput{Subject: "b", Description: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := core.ToolContext{Context: context.Background(), SessionID: "s", SessionStore: store}
+	toolCtx := core.ToolContext{Context: ctx, SessionID: "s", SessionStore: store}
 	tool := TaskUpdateTool{}
 	input, err := tool.Validate(map[string]interface{}{
 		"id":         a.ID,
@@ -33,14 +34,14 @@ func TestTaskUpdateToolSupportsEdgesMetadataAndDeletedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := tool.Execute(input, ctx)
+	res, err := tool.Execute(input, toolCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.IsError {
 		t.Fatalf("expected update to succeed, got %v", res.Content)
 	}
-	updated, _, err := store.GetTask("s", a.ID)
+	updated, _, err := store.GetTask(ctx, "s", a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,14 +56,14 @@ func TestTaskUpdateToolSupportsEdgesMetadataAndDeletedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err = tool.Execute(input, ctx)
+	res, err = tool.Execute(input, toolCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.IsError {
 		t.Fatalf("expected delete-compatible status update to succeed, got %v", res.Content)
 	}
-	deleted, _, err := store.GetTask("s", a.ID)
+	deleted, _, err := store.GetTask(ctx, "s", a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,15 +87,16 @@ func TestTaskUpdateToolRejectsInvalidPatchInputs(t *testing.T) {
 
 func TestTaskUpdateToolReportsCycleErrors(t *testing.T) {
 	store := sessions.NewInMemoryStore()
-	a, _ := store.CreateTask("s", core.CreateTaskInput{Subject: "a", Description: ""})
-	b, _ := store.CreateTask("s", core.CreateTaskInput{Subject: "b", Description: ""})
-	ctx := core.ToolContext{Context: context.Background(), SessionID: "s", SessionStore: store}
+	ctx := context.Background()
+	a, _ := store.CreateTask(ctx, "s", core.CreateTaskInput{Subject: "a", Description: ""})
+	b, _ := store.CreateTask(ctx, "s", core.CreateTaskInput{Subject: "b", Description: ""})
+	toolCtx := core.ToolContext{Context: ctx, SessionID: "s", SessionStore: store}
 	tool := TaskUpdateTool{}
 	input, err := tool.Validate(map[string]interface{}{"id": a.ID, "add_blocks": []interface{}{b.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res, err := tool.Execute(input, ctx); err != nil || res.IsError {
+	if res, err := tool.Execute(input, toolCtx); err != nil || res.IsError {
 		t.Fatalf("expected first edge update to succeed: %v %v", res.Content, err)
 	}
 
@@ -102,7 +104,7 @@ func TestTaskUpdateToolReportsCycleErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := tool.Execute(input, ctx)
+	res, err := tool.Execute(input, toolCtx)
 	if err != nil {
 		t.Fatal(err)
 	}

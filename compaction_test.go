@@ -59,8 +59,9 @@ func TestDefaultCompactionChangesProviderViewOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := context.Background()
 	for i := 0; i < 12; i++ {
-		if err := session.append([]core.Message{
+		if err := session.append(ctx, []core.Message{
 			{Role: "user", Content: []core.ContentBlock{core.Text(strings.Repeat("old user ", 12))}},
 			{Role: "assistant", Content: []core.ContentBlock{core.Text(strings.Repeat("old assistant ", 12))}},
 		}); err != nil {
@@ -82,7 +83,7 @@ func TestDefaultCompactionChangesProviderViewOnly(t *testing.T) {
 	if compactions[0].MessagesAfter >= compactions[0].MessagesBefore {
 		t.Fatalf("expected provider view to shrink, before=%d after=%d", compactions[0].MessagesBefore, compactions[0].MessagesAfter)
 	}
-	stored, err := store.LoadMessages("compact")
+	stored, err := store.LoadMessages(ctx, "compact")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +106,11 @@ func TestDefaultCompactionChangesProviderViewOnly(t *testing.T) {
 
 func TestCompactionReinjectsInvokedSkillsProviderOnly(t *testing.T) {
 	store := sessions.NewInMemoryStore()
-	if _, err := store.Create("skills", nil); err != nil {
+	ctx := context.Background()
+	if _, err := store.Create(ctx, "skills", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetInvokedSkills("skills", []core.InvokedSkillRecord{
+	if err := store.SetInvokedSkills(ctx, "skills", []core.InvokedSkillRecord{
 		{Name: "review", SubstitutedBody: "Review carefully.", InvokedAt: 10},
 		{Name: "test", SubstitutedBody: "Run tests.", InvokedAt: 20},
 	}); err != nil {
@@ -129,7 +131,7 @@ func TestCompactionReinjectsInvokedSkillsProviderOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 12; i++ {
-		if err := session.append([]core.Message{
+		if err := session.append(ctx, []core.Message{
 			{Role: "user", Content: []core.ContentBlock{core.Text(strings.Repeat("old user ", 12))}},
 			{Role: "assistant", Content: []core.ContentBlock{core.Text(strings.Repeat("old assistant ", 12))}},
 		}); err != nil {
@@ -158,7 +160,7 @@ func TestCompactionReinjectsInvokedSkillsProviderOnly(t *testing.T) {
 	if !strings.Contains(replayText, "review") || !strings.Contains(replayText, "Review carefully.") || !strings.Contains(replayText, "test") {
 		t.Fatalf("unexpected skill replay text: %s", replayText)
 	}
-	stored, err := store.LoadMessages("skills")
+	stored, err := store.LoadMessages(ctx, "skills")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,10 +173,11 @@ func TestCompactionReinjectsInvokedSkillsProviderOnly(t *testing.T) {
 
 func TestCompactionSkillReplayDoesNotDuplicateAcrossRuns(t *testing.T) {
 	store := sessions.NewInMemoryStore()
-	if _, err := store.Create("skills-dedup", nil); err != nil {
+	ctx := context.Background()
+	if _, err := store.Create(ctx, "skills-dedup", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetInvokedSkills("skills-dedup", []core.InvokedSkillRecord{
+	if err := store.SetInvokedSkills(ctx, "skills-dedup", []core.InvokedSkillRecord{
 		{Name: "review", SubstitutedBody: "Review carefully."},
 	}); err != nil {
 		t.Fatal(err)
@@ -194,7 +197,7 @@ func TestCompactionSkillReplayDoesNotDuplicateAcrossRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 12; i++ {
-		if err := session.append([]core.Message{
+		if err := session.append(ctx, []core.Message{
 			{Role: "user", Content: []core.ContentBlock{core.Text(strings.Repeat("old user ", 12))}},
 			{Role: "assistant", Content: []core.ContentBlock{core.Text(strings.Repeat("old assistant ", 12))}},
 		}); err != nil {
@@ -340,7 +343,8 @@ func TestContextLengthErrorForcesOneCompactionRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.append([]core.Message{
+	ctx := context.Background()
+	if err := session.append(ctx, []core.Message{
 		{Role: "user", Content: []core.ContentBlock{core.Text("old")}},
 		{Role: "assistant", Content: []core.ContentBlock{core.Text("old response")}},
 	}); err != nil {

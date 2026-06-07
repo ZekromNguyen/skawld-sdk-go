@@ -58,7 +58,11 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 		}
 	}
 	userMsg := buildUserMessage(prompt, opts.Images)
-	if err := s.append([]core.Message{userMsg}); err != nil {
+	if err := s.append(ctx, []core.Message{userMsg}); err != nil {
+		if isAbortError(ctx, err) {
+			_ = emitter.Emit(abortedResult(total, started))
+			return
+		}
 		emitRunError(emitter, err, total, started)
 		return
 	}
@@ -105,7 +109,11 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 			return
 		}
 	turnSucceeded:
-		if err := s.append([]core.Message{assistant}); err != nil {
+		if err := s.append(ctx, []core.Message{assistant}); err != nil {
+			if isAbortError(ctx, err) {
+				_ = emitter.Emit(abortedResult(total, started))
+				return
+			}
 			emitRunError(emitter, err, total, started)
 			return
 		}
@@ -125,7 +133,11 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 		results := s.executeToolCalls(ctx, runID, toolUseBlocks(assistant), emitter)
 		s.clearActiveSkillOverlay()
 		resultMsg := core.Message{Role: "user", Content: results}
-		if err := s.append([]core.Message{resultMsg}); err != nil {
+		if err := s.append(ctx, []core.Message{resultMsg}); err != nil {
+			if isAbortError(ctx, err) {
+				_ = emitter.Emit(abortedResult(total, started))
+				return
+			}
 			emitRunError(emitter, err, total, started)
 			return
 		}

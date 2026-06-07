@@ -132,7 +132,7 @@ Review $ARGUMENTS now.`)
 	if permissionCallbacks != 0 {
 		t.Fatalf("expected overlay to avoid permission prompt callback, got %d callbacks", permissionCallbacks)
 	}
-	loaded, ok, err := store.Load("skills")
+	loaded, ok, err := store.Load(context.Background(), "skills")
 	if err != nil || !ok {
 		t.Fatalf("load failed: ok=%t err=%v", ok, err)
 	}
@@ -157,12 +157,13 @@ func TestSkillResumeAndCompactionReplay(t *testing.T) {
 	writeSkillFile(t, dir, "review", `---
 description: Review skill
 ---
-Review body`)
+	Review body`)
 	store := sessions.NewInMemoryStore()
-	if _, err := store.Create("resume", nil); err != nil {
+	ctx := context.Background()
+	if _, err := store.Create(ctx, "resume", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetInvokedSkills("resume", []core.InvokedSkillRecord{{Name: "review", SubstitutedBody: "Review body", InvokedAt: 1}}); err != nil {
+	if err := store.SetInvokedSkills(ctx, "resume", []core.InvokedSkillRecord{{Name: "review", SubstitutedBody: "Review body", InvokedAt: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	provider := &recordingCompactionProvider{}
@@ -181,7 +182,7 @@ Review body`)
 		t.Fatal(err)
 	}
 	for i := 0; i < 12; i++ {
-		if err := session.append([]core.Message{
+		if err := session.append(ctx, []core.Message{
 			{Role: "user", Content: []core.ContentBlock{core.Text(strings.Repeat("old user ", 12))}},
 			{Role: "assistant", Content: []core.ContentBlock{core.Text(strings.Repeat("old assistant ", 12))}},
 		}); err != nil {

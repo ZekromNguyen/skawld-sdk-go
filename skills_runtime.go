@@ -32,7 +32,7 @@ func (s *Session) invokeSkill(ctx context.Context, inv core.SkillInvocation, emi
 		InvokedAt:    now,
 	}
 	s.skillMu.Unlock()
-	if err := s.store.SetInvokedSkills(s.ID, append([]core.InvokedSkillRecord(nil), s.invokedSkills...)); err != nil {
+	if err := s.store.SetInvokedSkills(ctx, s.ID, append([]core.InvokedSkillRecord(nil), s.invokedSkills...)); err != nil {
 		return core.ToolResult{}, err
 	}
 	if !emitter.Emit(core.Event{Type: core.EventSkillInvoked, Subtype: def.Name, Delta: map[string]interface{}{"skill": def.Name, "arguments": inv.Arguments, "model": string(def.Model), "allowed_tools": def.AllowedTools}}) {

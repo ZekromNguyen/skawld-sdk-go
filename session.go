@@ -183,8 +183,8 @@ func (s *Session) Abort() {
 	}
 }
 
-func (s *Session) append(messages []core.Message) error {
-	if _, err := s.store.AppendMessages(s.ID, messages); err != nil {
+func (s *Session) append(ctx context.Context, messages []core.Message) error {
+	if _, err := s.store.AppendMessages(ctx, s.ID, messages); err != nil {
 		return err
 	}
 	s.providerMu.Lock()
@@ -221,7 +221,7 @@ func (s *Session) compactProviderView(ctx context.Context, trigger string, emitt
 		return false, err
 	}
 	next := stripProviderOnlyCompactionMessages(cloneMessages(result.Messages))
-	skills, err := s.loadInvokedSkills()
+	skills, err := s.loadInvokedSkills(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -244,8 +244,8 @@ func (s *Session) compactProviderView(ctx context.Context, trigger string, emitt
 	return true, nil
 }
 
-func (s *Session) loadInvokedSkills() ([]core.InvokedSkillRecord, error) {
-	rec, ok, err := s.store.Load(s.ID)
+func (s *Session) loadInvokedSkills(ctx context.Context) ([]core.InvokedSkillRecord, error) {
+	rec, ok, err := s.store.Load(ctx, s.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +291,11 @@ func estimateProviderTokens(system []core.SystemBlock, tools []core.ToolSchema, 
 }
 
 func (s *Session) UpdateMeta(meta map[string]interface{}) error {
-	rec, err := s.store.UpdateMeta(s.ID, meta)
+	return s.UpdateMetaContext(context.Background(), meta)
+}
+
+func (s *Session) UpdateMetaContext(ctx context.Context, meta map[string]interface{}) error {
+	rec, err := s.store.UpdateMeta(ctx, s.ID, meta)
 	if err != nil {
 		return err
 	}

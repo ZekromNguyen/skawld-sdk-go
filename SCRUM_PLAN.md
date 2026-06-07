@@ -360,7 +360,7 @@ work. It continues after the completed migration plan and keeps the same
 Scrum-aligned structure: implementation tasks, testing tasks, and acceptance
 criteria for each increment.
 
-Status updated after Sprint 10 implementation on 2026-06-06.
+Status updated after Sprint 11 implementation on 2026-06-07.
 
 ## Phase 10: Run Lifecycle And Provider Stream Safety
 
@@ -458,36 +458,39 @@ with patch size instead of session size.
 
 Implementation tasks:
 
-- [ ] Add `context.Context` to the `core.SessionStore` interface.
-- [ ] Update in-memory and SQLite stores to implement the context-aware
+- [x] Add `context.Context` to the `core.SessionStore` interface.
+- [x] Update in-memory and SQLite stores to implement the context-aware
       interface.
-- [ ] Thread session and run contexts through `Agent.Session`, `Session.append`,
+- [x] Thread session and run contexts through `Agent.Session`, `Session.append`,
       compaction skill replay, and task tools.
-- [ ] Replace SQLite `context.Background()` transactions and queries with
+- [x] Replace SQLite `context.Background()` transactions and queries with
       `BeginTx`, `ExecContext`, `QueryContext`, and `QueryRowContext`.
-- [ ] Add compatibility adapters for existing custom stores if needed.
-- [ ] Deep-copy mutable records, messages, task metadata, content-block inputs,
+- [x] Add compatibility adapters for existing custom stores if needed.
+- [x] Deep-copy mutable records, messages, task metadata, content-block inputs,
       and provider metadata at in-memory store boundaries.
-- [ ] Replace SQLite full task-graph replacement with targeted task-row and
+- [x] Replace SQLite full task-graph replacement with targeted task-row and
       task-edge mutations.
-- [ ] Implement scalable cycle validation for task dependency changes.
+- [x] Implement scalable cycle validation for task dependency changes.
 
 Testing tasks:
 
-- [ ] Add cancellation tests for slow or locked SQLite operations.
-- [ ] Add in-memory store mutation-isolation tests.
-- [ ] Add SQLite task update tests that verify only targeted rows and edges
+- [x] Add cancellation tests for slow or locked SQLite operations.
+- [x] Add in-memory store mutation-isolation tests.
+- [x] Add SQLite task update tests that verify only targeted rows and edges
       change.
-- [ ] Add SQLite task benchmarks for 100, 1,000, and 10,000 tasks.
-- [ ] Run `go test ./sessions/... ./tools/...` and relevant integration tests.
+- [x] Add SQLite task benchmarks for 100, 1,000, and 10,000 tasks.
+- [x] Run `go test ./sessions/... ./tools/...` and relevant integration tests.
+      Verified on 2026-06-07 with `go test ./sessions/... ./tools/...`,
+      `go test ./...`, and
+      `go test ./sessions/sqlite -run '^$' -bench 'BenchmarkStoreTask' -benchtime=1x`.
 
 Acceptance criteria:
 
-- [ ] Store operations can be canceled by callers.
-- [ ] In-memory store callers cannot mutate stored state through returned maps
+- [x] Store operations can be canceled by callers.
+- [x] In-memory store callers cannot mutate stored state through returned maps
       or slices.
-- [ ] Updating one SQLite task no longer rewrites every task edge.
-- [ ] Session persistence remains backward compatible for existing stored data.
+- [x] Updating one SQLite task no longer rewrites every task edge.
+- [x] Session persistence remains backward compatible for existing stored data.
 
 ## Phase 13: Runtime Ownership, Concurrency Contracts, And Security Policy
 
@@ -694,9 +697,9 @@ Sprint 10:
 
 Sprint 11:
 
-- [ ] Phase 12 context-aware store interface
-- [ ] Phase 12 in-memory deep-copy boundaries
-- [ ] Phase 12 SQLite targeted task updates
+- [x] Phase 12 context-aware store interface
+- [x] Phase 12 in-memory deep-copy boundaries
+- [x] Phase 12 SQLite targeted task updates
 
 Sprint 12:
 

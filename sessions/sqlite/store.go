@@ -23,6 +23,12 @@ type Store struct {
 
 // Open opens or creates a SQLite session store at path.
 func Open(path string) (*Store, error) {
+	return OpenContext(context.Background(), path)
+}
+
+// OpenContext opens or creates a SQLite session store at path using ctx for
+// initial connection and schema setup work.
+func OpenContext(ctx context.Context, path string) (*Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("sqlite store path is required")
 	}
@@ -31,18 +37,18 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := initializeSchema(db); err != nil {
+	if err := initializeSchema(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
 }
 
-func initializeSchema(db *sql.DB) error {
+func initializeSchema(ctx context.Context, db *sql.DB) error {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON`,
 		`PRAGMA busy_timeout = 5000`,
@@ -98,26 +104,26 @@ func initializeSchema(db *sql.DB) error {
 		`PRAGMA user_version = 1`,
 	}
 	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) Create(id string, meta map[string]interface{}) (core.SessionRecord, error) {
+func (s *Store) Create(ctx context.Context, id string, meta map[string]interface{}) (core.SessionRecord, error) {
 	if id == "" {
 		id = idgen.New()
 	}
 	if meta == nil {
 		meta = map[string]interface{}{}
 	}
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return core.SessionRecord{}, err
 	}
 	defer rollback(tx)
-	if rec, ok, err := loadSessionTx(tx, id); err != nil || ok {
+	if rec, ok, err := loadSessionTx(ctx, tx, id); err != nil || ok {
 		return rec, err
 	}
 	now := nowString()
@@ -125,7 +131,7 @@ func (s *Store) Create(id string, meta map[string]interface{}) (core.SessionReco
 	if err != nil {
 		return core.SessionRecord{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO sessions(id, created_at, updated_at, meta_json) VALUES (?, ?, ?, ?)`, id, now, now, metaJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(id, created_at, updated_at, meta_json) VALUES (?, ?, ?, ?)`, id, now, now, metaJSON); err != nil {
 		return core.SessionRecord{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -134,12 +140,12 @@ func (s *Store) Create(id string, meta map[string]interface{}) (core.SessionReco
 	return core.SessionRecord{ID: id, CreatedAt: now, UpdatedAt: now, Meta: meta}, nil
 }
 
-func (s *Store) Load(id string) (core.SessionRecord, bool, error) {
-	rec, ok, err := loadSession(s.db, id)
+func (s *Store) Load(ctx context.Context, id string) (core.SessionRecord, bool, error) {
+	rec, ok, err := loadSession(ctx, s.db, id)
 	if err != nil || !ok {
 		return rec, ok, err
 	}
-	skills, err := loadInvokedSkills(s.db, id)
+	skills, err := loadInvokedSkills(ctx, s.db, id)
 	if err != nil {
 		return core.SessionRecord{}, false, err
 	}
@@ -147,8 +153,8 @@ func (s *Store) Load(id string) (core.SessionRecord, bool, error) {
 	return rec, true, nil
 }
 
-func (s *Store) LoadMessages(id string) ([]core.StoredMessage, error) {
-	rows, err := s.db.Query(`SELECT seq, appended_at, message_json FROM messages WHERE session_id = ? ORDER BY seq ASC`, id)
+func (s *Store) LoadMessages(ctx context.Context, id string) ([]core.StoredMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, appended_at, message_json FROM messages WHERE session_id = ? ORDER BY seq ASC`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -168,18 +174,18 @@ func (s *Store) LoadMessages(id string) ([]core.StoredMessage, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) AppendMessages(id string, messages []core.Message) ([]core.StoredMessage, error) {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+func (s *Store) AppendMessages(ctx context.Context, id string, messages []core.Message) ([]core.StoredMessage, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(tx)
 	now := nowString()
-	if err := ensureSessionTx(tx, id, now); err != nil {
+	if err := ensureSessionTx(ctx, tx, id, now); err != nil {
 		return nil, err
 	}
 	var maxSeq int
-	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM messages WHERE session_id = ?`, id).Scan(&maxSeq); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM messages WHERE session_id = ?`, id).Scan(&maxSeq); err != nil {
 		return nil, err
 	}
 	appended := make([]core.StoredMessage, 0, len(messages))
@@ -189,12 +195,12 @@ func (s *Store) AppendMessages(id string, messages []core.Message) ([]core.Store
 			return nil, err
 		}
 		stored := core.StoredMessage{Seq: maxSeq + i + 1, AppendedAt: now, Message: msg}
-		if _, err := tx.Exec(`INSERT INTO messages(session_id, seq, appended_at, message_json) VALUES (?, ?, ?, ?)`, id, stored.Seq, stored.AppendedAt, raw); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messages(session_id, seq, appended_at, message_json) VALUES (?, ?, ?, ?)`, id, stored.Seq, stored.AppendedAt, raw); err != nil {
 			return nil, err
 		}
 		appended = append(appended, stored)
 	}
-	if err := touchSessionTx(tx, id, now); err != nil {
+	if err := touchSessionTx(ctx, tx, id, now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -203,13 +209,13 @@ func (s *Store) AppendMessages(id string, messages []core.Message) ([]core.Store
 	return appended, nil
 }
 
-func (s *Store) UpdateMeta(id string, meta map[string]interface{}) (core.SessionRecord, error) {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+func (s *Store) UpdateMeta(ctx context.Context, id string, meta map[string]interface{}) (core.SessionRecord, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return core.SessionRecord{}, err
 	}
 	defer rollback(tx)
-	rec, ok, err := loadSessionTx(tx, id)
+	rec, ok, err := loadSessionTx(ctx, tx, id)
 	if err != nil {
 		return core.SessionRecord{}, err
 	}
@@ -227,7 +233,7 @@ func (s *Store) UpdateMeta(id string, meta map[string]interface{}) (core.Session
 	if err != nil {
 		return core.SessionRecord{}, err
 	}
-	if _, err := tx.Exec(`UPDATE sessions SET meta_json = ?, updated_at = ? WHERE id = ?`, metaJSON, rec.UpdatedAt, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET meta_json = ?, updated_at = ? WHERE id = ?`, metaJSON, rec.UpdatedAt, id); err != nil {
 		return core.SessionRecord{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -236,16 +242,16 @@ func (s *Store) UpdateMeta(id string, meta map[string]interface{}) (core.Session
 	return rec, nil
 }
 
-func (s *Store) SetInvokedSkills(id string, skills []core.InvokedSkillRecord) error {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+func (s *Store) SetInvokedSkills(ctx context.Context, id string, skills []core.InvokedSkillRecord) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer rollback(tx)
-	if err := ensureSessionTx(tx, id, nowString()); err != nil {
+	if err := ensureSessionTx(ctx, tx, id, nowString()); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM invoked_skills WHERE session_id = ?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invoked_skills WHERE session_id = ?`, id); err != nil {
 		return err
 	}
 	for i, skill := range skills {
@@ -253,14 +259,14 @@ func (s *Store) SetInvokedSkills(id string, skills []core.InvokedSkillRecord) er
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO invoked_skills(session_id, position, skill_json) VALUES (?, ?, ?)`, id, i, raw); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO invoked_skills(session_id, position, skill_json) VALUES (?, ?, ?)`, id, i, raw); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func (s *Store) List(limit, offset int) ([]core.SessionRecord, error) {
+func (s *Store) List(ctx context.Context, limit, offset int) ([]core.SessionRecord, error) {
 	if offset < 0 {
 		offset = 0
 	}
@@ -273,7 +279,7 @@ func (s *Store) List(limit, offset int) ([]core.SessionRecord, error) {
 		query += ` LIMIT -1 OFFSET ?`
 		args = append(args, offset)
 	}
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -289,29 +295,29 @@ func (s *Store) List(limit, offset int) ([]core.SessionRecord, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) Delete(id string) error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+func (s *Store) Delete(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
 	return err
 }
 
-func (s *Store) CreateTask(sessionID string, input core.CreateTaskInput) (core.Task, error) {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+func (s *Store) CreateTask(ctx context.Context, sessionID string, input core.CreateTaskInput) (core.Task, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return core.Task{}, err
 	}
 	defer rollback(tx)
 	now := nowString()
-	if err := ensureSessionTx(tx, sessionID, now); err != nil {
+	if err := ensureSessionTx(ctx, tx, sessionID, now); err != nil {
 		return core.Task{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO task_counters(session_id, last_id) VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING`, sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_counters(session_id, last_id) VALUES (?, 0) ON CONFLICT(session_id) DO NOTHING`, sessionID); err != nil {
 		return core.Task{}, err
 	}
-	if _, err := tx.Exec(`UPDATE task_counters SET last_id = last_id + 1 WHERE session_id = ?`, sessionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE task_counters SET last_id = last_id + 1 WHERE session_id = ?`, sessionID); err != nil {
 		return core.Task{}, err
 	}
 	var n int
-	if err := tx.QueryRow(`SELECT last_id FROM task_counters WHERE session_id = ?`, sessionID).Scan(&n); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT last_id FROM task_counters WHERE session_id = ?`, sessionID).Scan(&n); err != nil {
 		return core.Task{}, err
 	}
 	task := core.Task{
@@ -327,10 +333,10 @@ func (s *Store) CreateTask(sessionID string, input core.CreateTaskInput) (core.T
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := insertTaskTx(tx, task); err != nil {
+	if err := insertTaskTx(ctx, tx, task); err != nil {
 		return core.Task{}, err
 	}
-	if err := touchSessionTx(tx, sessionID, now); err != nil {
+	if err := touchSessionTx(ctx, tx, sessionID, now); err != nil {
 		return core.Task{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -339,17 +345,30 @@ func (s *Store) CreateTask(sessionID string, input core.CreateTaskInput) (core.T
 	return task, nil
 }
 
-func (s *Store) GetTask(sessionID, taskID string) (core.Task, bool, error) {
-	tasks, err := loadTasks(s.db, sessionID)
+func (s *Store) GetTask(ctx context.Context, sessionID, taskID string) (core.Task, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return core.Task{}, false, err
 	}
-	task, ok := tasks[taskID]
-	return task, ok, nil
+	defer rollback(tx)
+	task, ok, err := loadTaskTx(ctx, tx, sessionID, taskID)
+	if err != nil {
+		return core.Task{}, false, err
+	}
+	if !ok {
+		return core.Task{}, false, nil
+	}
+	if err := loadTaskEdgesTx(ctx, tx, sessionID, map[string]*core.Task{task.ID: &task}); err != nil {
+		return core.Task{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return core.Task{}, false, err
+	}
+	return task, true, nil
 }
 
-func (s *Store) ListTasks(sessionID string) ([]core.Task, error) {
-	tasks, err := loadTasks(s.db, sessionID)
+func (s *Store) ListTasks(ctx context.Context, sessionID string) ([]core.Task, error) {
+	tasks, err := loadTasks(ctx, s.db, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,19 +387,21 @@ func (s *Store) ListTasks(sessionID string) ([]core.Task, error) {
 	return out, nil
 }
 
-func (s *Store) UpdateTask(sessionID, taskID string, patch core.TaskPatch) (core.Task, bool, error) {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+func (s *Store) UpdateTask(ctx context.Context, sessionID, taskID string, patch core.TaskPatch) (core.Task, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return core.Task{}, false, err
 	}
 	defer rollback(tx)
-	tasks, err := loadTasksTx(tx, sessionID)
+	task, ok, err := loadTaskTx(ctx, tx, sessionID, taskID)
 	if err != nil {
 		return core.Task{}, false, err
 	}
-	task, ok := tasks[taskID]
 	if !ok {
 		return core.Task{}, false, nil
+	}
+	if err := loadTaskEdgesTx(ctx, tx, sessionID, map[string]*core.Task{task.ID: &task}); err != nil {
+		return core.Task{}, false, err
 	}
 	if patch.Subject != nil {
 		task.Subject = *patch.Subject
@@ -416,16 +437,30 @@ func (s *Store) UpdateTask(sessionID, taskID string, patch core.TaskPatch) (core
 		}
 	}
 	if task.Status == core.TaskDeleted {
-		detachTask(tasks, taskID, &task)
-	} else if err := applyTaskEdges(tasks, taskID, &task, patch); err != nil {
+		task.Blocks = []string{}
+		task.BlockedBy = []string{}
+	} else if err := applyTaskEdgesTx(ctx, tx, sessionID, taskID, &task, patch); err != nil {
 		return core.Task{}, true, err
 	}
 	task.UpdatedAt = nowString()
-	tasks[taskID] = task
-	if err := replaceTasksTx(tx, sessionID, tasks); err != nil {
+	if err := updateTaskRowTx(ctx, tx, task); err != nil {
 		return core.Task{}, true, err
 	}
-	if err := touchSessionTx(tx, sessionID, task.UpdatedAt); err != nil {
+	if err := applyTaskEdgeChangesTx(ctx, tx, sessionID, taskID, task, patch); err != nil {
+		return core.Task{}, true, err
+	}
+	if task.Status != core.TaskDeleted {
+		for _, blockedID := range task.Blocks {
+			cyclic, err := taskPathExistsTx(ctx, tx, sessionID, blockedID, taskID)
+			if err != nil {
+				return core.Task{}, true, err
+			}
+			if cyclic {
+				return core.Task{}, true, fmt.Errorf("task dependency cycle detected")
+			}
+		}
+	}
+	if err := touchSessionTx(ctx, tx, sessionID, task.UpdatedAt); err != nil {
 		return core.Task{}, true, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -434,29 +469,26 @@ func (s *Store) UpdateTask(sessionID, taskID string, patch core.TaskPatch) (core
 	return task, true, nil
 }
 
-func (s *Store) DeleteTask(sessionID, taskID string) (bool, error) {
-	tx, err := s.db.BeginTx(context.Background(), nil)
+func (s *Store) DeleteTask(ctx context.Context, sessionID, taskID string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer rollback(tx)
-	tasks, err := loadTasksTx(tx, sessionID)
+	_, ok, err := loadTaskTx(ctx, tx, sessionID, taskID)
 	if err != nil {
 		return false, err
 	}
-	task, ok := tasks[taskID]
 	if !ok {
 		return false, nil
 	}
-	detachTask(tasks, taskID, &task)
-	delete(tasks, taskID)
-	if err := replaceTasksTx(tx, sessionID, tasks); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_edges WHERE session_id = ? AND (blocker_id = ? OR blocked_id = ?)`, sessionID, taskID, taskID); err != nil {
 		return true, err
 	}
-	if _, err := tx.Exec(`DELETE FROM tasks WHERE session_id = ? AND id = ?`, sessionID, taskID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE session_id = ? AND id = ?`, sessionID, taskID); err != nil {
 		return true, err
 	}
-	if err := touchSessionTx(tx, sessionID, nowString()); err != nil {
+	if err := touchSessionTx(ctx, tx, sessionID, nowString()); err != nil {
 		return true, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -492,12 +524,12 @@ func scanSession(row rowScanner) (core.SessionRecord, error) {
 	return rec, nil
 }
 
-func loadSession(db *sql.DB, id string) (core.SessionRecord, bool, error) {
-	return loadSessionRow(db.QueryRow(`SELECT id, created_at, updated_at, meta_json FROM sessions WHERE id = ?`, id))
+func loadSession(ctx context.Context, db *sql.DB, id string) (core.SessionRecord, bool, error) {
+	return loadSessionRow(db.QueryRowContext(ctx, `SELECT id, created_at, updated_at, meta_json FROM sessions WHERE id = ?`, id))
 }
 
-func loadSessionTx(tx *sql.Tx, id string) (core.SessionRecord, bool, error) {
-	return loadSessionRow(tx.QueryRow(`SELECT id, created_at, updated_at, meta_json FROM sessions WHERE id = ?`, id))
+func loadSessionTx(ctx context.Context, tx *sql.Tx, id string) (core.SessionRecord, bool, error) {
+	return loadSessionRow(tx.QueryRowContext(ctx, `SELECT id, created_at, updated_at, meta_json FROM sessions WHERE id = ?`, id))
 }
 
 func loadSessionRow(row rowScanner) (core.SessionRecord, bool, error) {
@@ -511,22 +543,22 @@ func loadSessionRow(row rowScanner) (core.SessionRecord, bool, error) {
 	return rec, true, nil
 }
 
-func ensureSessionTx(tx *sql.Tx, id, now string) error {
+func ensureSessionTx(ctx context.Context, tx *sql.Tx, id, now string) error {
 	metaJSON, err := marshalJSON(map[string]interface{}{})
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO sessions(id, created_at, updated_at, meta_json) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, id, now, now, metaJSON)
+	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(id, created_at, updated_at, meta_json) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, id, now, now, metaJSON)
 	return err
 }
 
-func touchSessionTx(tx *sql.Tx, id, now string) error {
-	_, err := tx.Exec(`UPDATE sessions SET updated_at = ? WHERE id = ?`, now, id)
+func touchSessionTx(ctx context.Context, tx *sql.Tx, id, now string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE sessions SET updated_at = ? WHERE id = ?`, now, id)
 	return err
 }
 
-func loadInvokedSkills(db *sql.DB, id string) ([]core.InvokedSkillRecord, error) {
-	rows, err := db.Query(`SELECT skill_json FROM invoked_skills WHERE session_id = ? ORDER BY position ASC`, id)
+func loadInvokedSkills(ctx context.Context, db *sql.DB, id string) ([]core.InvokedSkillRecord, error) {
+	rows, err := db.QueryContext(ctx, `SELECT skill_json FROM invoked_skills WHERE session_id = ? ORDER BY position ASC`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -546,13 +578,13 @@ func loadInvokedSkills(db *sql.DB, id string) ([]core.InvokedSkillRecord, error)
 	return out, rows.Err()
 }
 
-func loadTasks(db *sql.DB, sessionID string) (map[string]core.Task, error) {
-	tx, err := db.BeginTx(context.Background(), nil)
+func loadTasks(ctx context.Context, db *sql.DB, sessionID string) (map[string]core.Task, error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(tx)
-	tasks, err := loadTasksTx(tx, sessionID)
+	tasks, err := loadTasksTx(ctx, tx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -562,8 +594,8 @@ func loadTasks(db *sql.DB, sessionID string) (map[string]core.Task, error) {
 	return tasks, nil
 }
 
-func loadTasksTx(tx *sql.Tx, sessionID string) (map[string]core.Task, error) {
-	rows, err := tx.Query(`SELECT id, subject, description, active_form, status, owner, metadata_json, created_at, updated_at FROM tasks WHERE session_id = ?`, sessionID)
+func loadTasksTx(ctx context.Context, tx *sql.Tx, sessionID string) (map[string]core.Task, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, subject, description, active_form, status, owner, metadata_json, created_at, updated_at FROM tasks WHERE session_id = ?`, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -588,7 +620,7 @@ func loadTasksTx(tx *sql.Tx, sessionID string) (map[string]core.Task, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	edgeRows, err := tx.Query(`SELECT blocker_id, blocked_id FROM task_edges WHERE session_id = ? ORDER BY blocker_id ASC, blocked_id ASC`, sessionID)
+	edgeRows, err := tx.QueryContext(ctx, `SELECT blocker_id, blocked_id FROM task_edges WHERE session_id = ? ORDER BY blocker_id ASC, blocked_id ASC`, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -611,12 +643,57 @@ func loadTasksTx(tx *sql.Tx, sessionID string) (map[string]core.Task, error) {
 	return tasks, edgeRows.Err()
 }
 
-func insertTaskTx(tx *sql.Tx, task core.Task) error {
+func loadTaskTx(ctx context.Context, tx *sql.Tx, sessionID, taskID string) (core.Task, bool, error) {
+	row := tx.QueryRowContext(ctx, `SELECT id, subject, description, active_form, status, owner, metadata_json, created_at, updated_at FROM tasks WHERE session_id = ? AND id = ?`, sessionID, taskID)
+	var task core.Task
+	var metadata sql.NullString
+	task.SessionID = sessionID
+	task.Blocks = []string{}
+	task.BlockedBy = []string{}
+	if err := row.Scan(&task.ID, &task.Subject, &task.Description, &task.ActiveForm, &task.Status, &task.Owner, &metadata, &task.CreatedAt, &task.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.Task{}, false, nil
+		}
+		return core.Task{}, false, err
+	}
+	if metadata.Valid && metadata.String != "" {
+		if err := json.Unmarshal([]byte(metadata.String), &task.Metadata); err != nil {
+			return core.Task{}, false, err
+		}
+	}
+	return task, true, nil
+}
+
+func loadTaskEdgesTx(ctx context.Context, tx *sql.Tx, sessionID string, tasks map[string]*core.Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT blocker_id, blocked_id FROM task_edges WHERE session_id = ? ORDER BY blocker_id ASC, blocked_id ASC`, sessionID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var blockerID, blockedID string
+		if err := rows.Scan(&blockerID, &blockedID); err != nil {
+			return err
+		}
+		if blocker, ok := tasks[blockerID]; ok {
+			blocker.Blocks = addID(blocker.Blocks, blockedID)
+		}
+		if blocked, ok := tasks[blockedID]; ok {
+			blocked.BlockedBy = addID(blocked.BlockedBy, blockerID)
+		}
+	}
+	return rows.Err()
+}
+
+func insertTaskTx(ctx context.Context, tx *sql.Tx, task core.Task) error {
 	metadata, err := nullableJSON(task.Metadata)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO tasks(session_id, id, subject, description, active_form, status, owner, metadata_json, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.SessionID, task.ID, task.Subject, task.Description, task.ActiveForm, task.Status, task.Owner, metadata, task.CreatedAt, task.UpdatedAt,
@@ -624,57 +701,43 @@ func insertTaskTx(tx *sql.Tx, task core.Task) error {
 	return err
 }
 
-func replaceTasksTx(tx *sql.Tx, sessionID string, tasks map[string]core.Task) error {
-	rows, err := tx.Query(`SELECT id FROM tasks WHERE session_id = ?`, sessionID)
+func updateTaskRowTx(ctx context.Context, tx *sql.Tx, task core.Task) error {
+	metadata, err := nullableJSON(task.Metadata)
 	if err != nil {
 		return err
 	}
-	existing := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		existing[id] = struct{}{}
-	}
-	if err := rows.Close(); err != nil {
+	_, err = tx.ExecContext(ctx,
+		`UPDATE tasks
+		SET subject = ?, description = ?, active_form = ?, status = ?, owner = ?, metadata_json = ?, updated_at = ?
+		WHERE session_id = ? AND id = ?`,
+		task.Subject, task.Description, task.ActiveForm, task.Status, task.Owner, metadata, task.UpdatedAt, task.SessionID, task.ID,
+	)
+	return err
+}
+
+func applyTaskEdgeChangesTx(ctx context.Context, tx *sql.Tx, sessionID, taskID string, task core.Task, patch core.TaskPatch) error {
+	if task.Status == core.TaskDeleted {
+		_, err := tx.ExecContext(ctx, `DELETE FROM task_edges WHERE session_id = ? AND (blocker_id = ? OR blocked_id = ?)`, sessionID, taskID, taskID)
 		return err
 	}
-	for id := range existing {
-		if _, ok := tasks[id]; !ok {
-			if _, err := tx.Exec(`DELETE FROM tasks WHERE session_id = ? AND id = ?`, sessionID, id); err != nil {
-				return err
-			}
-		}
-	}
-	if _, err := tx.Exec(`DELETE FROM task_edges WHERE session_id = ?`, sessionID); err != nil {
-		return err
-	}
-	for _, task := range tasks {
-		metadata, err := nullableJSON(task.Metadata)
-		if err != nil {
+	for _, id := range uniqueIDs(patch.AddBlocks) {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO task_edges(session_id, blocker_id, blocked_id) VALUES (?, ?, ?)`, sessionID, taskID, id); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO tasks(session_id, id, subject, description, active_form, status, owner, metadata_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(session_id, id) DO UPDATE SET
-				subject = excluded.subject,
-				description = excluded.description,
-				active_form = excluded.active_form,
-				status = excluded.status,
-				owner = excluded.owner,
-				metadata_json = excluded.metadata_json,
-				updated_at = excluded.updated_at`,
-			task.SessionID, task.ID, task.Subject, task.Description, task.ActiveForm, task.Status, task.Owner, metadata, task.CreatedAt, task.UpdatedAt,
-		); err != nil {
+	}
+	for _, id := range uniqueIDs(patch.RemoveBlocks) {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM task_edges WHERE session_id = ? AND blocker_id = ? AND blocked_id = ?`, sessionID, taskID, id); err != nil {
 			return err
 		}
-		for _, blockedID := range task.Blocks {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO task_edges(session_id, blocker_id, blocked_id) VALUES (?, ?, ?)`, sessionID, task.ID, blockedID); err != nil {
-				return err
-			}
+	}
+	for _, id := range uniqueIDs(patch.AddBlockedBy) {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO task_edges(session_id, blocker_id, blocked_id) VALUES (?, ?, ?)`, sessionID, id, taskID); err != nil {
+			return err
+		}
+	}
+	for _, id := range uniqueIDs(patch.RemoveBlockedBy) {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM task_edges WHERE session_id = ? AND blocker_id = ? AND blocked_id = ?`, sessionID, id, taskID); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -740,6 +803,62 @@ func applyTaskEdges(tasks map[string]core.Task, taskID string, task *core.Task, 
 		return fmt.Errorf("task dependency cycle detected")
 	}
 	return nil
+}
+
+func applyTaskEdgesTx(ctx context.Context, tx *sql.Tx, sessionID, taskID string, task *core.Task, patch core.TaskPatch) error {
+	for _, id := range uniqueIDs(patch.AddBlocks) {
+		if id == "" || id == taskID {
+			return fmt.Errorf("invalid task dependency: %q", id)
+		}
+		if ok, err := activeTaskExistsTx(ctx, tx, sessionID, id); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("blocked task not found: %s", id)
+		}
+		task.Blocks = addID(task.Blocks, id)
+	}
+	for _, id := range uniqueIDs(patch.RemoveBlocks) {
+		task.Blocks = removeID(task.Blocks, id)
+	}
+	for _, id := range uniqueIDs(patch.AddBlockedBy) {
+		if id == "" || id == taskID {
+			return fmt.Errorf("invalid task dependency: %q", id)
+		}
+		if ok, err := activeTaskExistsTx(ctx, tx, sessionID, id); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("blocking task not found: %s", id)
+		}
+		task.BlockedBy = addID(task.BlockedBy, id)
+	}
+	for _, id := range uniqueIDs(patch.RemoveBlockedBy) {
+		task.BlockedBy = removeID(task.BlockedBy, id)
+	}
+	return nil
+}
+
+func activeTaskExistsTx(ctx context.Context, tx *sql.Tx, sessionID, taskID string) (bool, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE session_id = ? AND id = ? AND status != ?`, sessionID, taskID, core.TaskDeleted).Scan(&n)
+	return n > 0, err
+}
+
+func taskPathExistsTx(ctx context.Context, tx *sql.Tx, sessionID, fromID, toID string) (bool, error) {
+	if fromID == toID {
+		return true, nil
+	}
+	var n int
+	err := tx.QueryRowContext(ctx, `WITH RECURSIVE reachable(id) AS (
+			SELECT blocked_id FROM task_edges WHERE session_id = ? AND blocker_id = ?
+			UNION
+			SELECT task_edges.blocked_id
+			FROM task_edges
+			JOIN reachable ON task_edges.blocker_id = reachable.id
+			JOIN tasks ON tasks.session_id = task_edges.session_id AND tasks.id = task_edges.blocked_id
+			WHERE task_edges.session_id = ? AND tasks.status != ?
+		)
+		SELECT COUNT(*) FROM reachable WHERE id = ? LIMIT 1`, sessionID, fromID, sessionID, core.TaskDeleted, toID).Scan(&n)
+	return n > 0, err
 }
 
 func uniqueIDs(ids []string) []string {

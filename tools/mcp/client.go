@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,18 +49,18 @@ func (m *Manager) Connect(ctx context.Context, existingNames []string) ([]core.T
 		}
 		if err := cfg.Validate(); err != nil {
 			closeClients(clients)
-			return nil, err
+			return nil, fmt.Errorf("validate mcp server %q: %w", cfg.Name, err)
 		}
 		client, err := openClient(ctx, cfg)
 		if err != nil {
 			closeClients(clients)
-			return nil, err
+			return nil, fmt.Errorf("connect mcp server %q: %w", cfg.Name, err)
 		}
 		clients = append(clients, client)
 		remoteTools, err := client.ListTools(ctx)
 		if err != nil {
 			closeClients(clients)
-			return nil, err
+			return nil, fmt.Errorf("list tools for mcp server %q: %w", cfg.Name, err)
 		}
 		for _, remote := range remoteTools {
 			name := UniqueToolName(cfg.Name, remote.Name, used)
@@ -75,16 +76,16 @@ func (m *Manager) Connect(ctx context.Context, existingNames []string) ([]core.T
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var errs []string
+	var errs []error
 	for _, client := range m.clients {
 		if err := client.Close(); err != nil {
-			errs = append(errs, err.Error())
+			errs = append(errs, err)
 		}
 	}
 	m.clients = nil
 	m.connected = false
 	if len(errs) > 0 {
-		return fmt.Errorf(strings.Join(errs, "; "))
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -142,12 +143,12 @@ func openClient(ctx context.Context, cfg ServerConfig) (*Client, error) {
 		tr = newHTTPTransport(*cfg.HTTP)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open transport: %w", err)
 	}
 	client := &Client{name: cfg.Name, transport: tr}
 	if err := client.Initialize(ctx); err != nil {
 		_ = tr.Close()
-		return nil, err
+		return nil, fmt.Errorf("initialize client: %w", err)
 	}
 	return client, nil
 }
@@ -159,15 +160,18 @@ func (c *Client) Initialize(ctx context.Context) error {
 		"clientInfo":      map[string]interface{}{"name": "skawld-sdk-go", "version": "0.1.0"},
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("send initialize request: %w", err)
 	}
-	return c.notify(ctx, "notifications/initialized", map[string]interface{}{})
+	if err := c.notify(ctx, "notifications/initialized", map[string]interface{}{}); err != nil {
+		return fmt.Errorf("send initialized notification: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) ListTools(ctx context.Context) ([]RemoteTool, error) {
 	result, err := c.request(ctx, "tools/list", map[string]interface{}{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request tools/list: %w", err)
 	}
 	rawTools, _ := result["tools"].([]interface{})
 	tools := make([]RemoteTool, 0, len(rawTools))
@@ -193,7 +197,7 @@ func (c *Client) ListTools(ctx context.Context) ([]RemoteTool, error) {
 func (c *Client) CallTool(ctx context.Context, name string, args map[string]interface{}) (core.ToolResult, error) {
 	result, err := c.request(ctx, "tools/call", map[string]interface{}{"name": name, "arguments": args})
 	if err != nil {
-		return core.ToolResult{}, err
+		return core.ToolResult{}, fmt.Errorf("request tools/call %q: %w", name, err)
 	}
 	return ConvertToolResult(result), nil
 }

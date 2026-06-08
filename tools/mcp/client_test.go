@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,6 +182,32 @@ func TestHTTPTransportUsesCustomClient(t *testing.T) {
 	}
 	if result["ok"] != true || atomic.LoadInt32(&calls) != 1 {
 		t.Fatalf("unexpected result=%+v calls=%d", result, calls)
+	}
+}
+
+type closeErrorTransport struct {
+	err error
+}
+
+func (t closeErrorTransport) Request(ctx context.Context, req rpcRequest) (map[string]interface{}, error) {
+	return nil, nil
+}
+func (t closeErrorTransport) Notify(ctx context.Context, req rpcRequest) error { return nil }
+func (t closeErrorTransport) Close() error                                     { return t.err }
+
+func TestManagerCloseJoinsClientErrors(t *testing.T) {
+	errA := errors.New("close a")
+	errB := errors.New("close b")
+	manager := &Manager{
+		connected: true,
+		clients: []*Client{
+			{name: "a", transport: closeErrorTransport{err: errA}},
+			{name: "b", transport: closeErrorTransport{err: errB}},
+		},
+	}
+	err := manager.Close()
+	if !errors.Is(err, errA) || !errors.Is(err, errB) {
+		t.Fatalf("expected joined close errors, got %v", err)
 	}
 }
 

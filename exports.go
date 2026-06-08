@@ -24,6 +24,9 @@ type ProviderStreamResult = core.ProviderStreamResult
 type StreamingProvider = core.StreamingProvider
 type LegacyStreamingProvider = core.LegacyStreamingProvider
 type ProviderFactory = core.ProviderFactory
+type Observer = core.Observer
+type Observation = core.Observation
+type ObservationType = core.ObservationType
 type Tool = core.Tool
 type ToolResult = core.ToolResult
 type ToolContext = core.ToolContext
@@ -61,4 +64,11 @@ const (
 	EventSkillInvoked      = core.EventSkillInvoked
 	EventSkillCompleted    = core.EventSkillCompleted
 	EventSubagent          = core.EventSubagent
+
+	ObservationProviderAttempt    = core.ObservationProviderAttempt
+	ObservationToolExecution      = core.ObservationToolExecution
+	ObservationPermissionCallback = core.ObservationPermissionCallback
+	ObservationCompaction         = core.ObservationCompaction
+	ObservationMCPCall            = core.ObservationMCPCall
+	ObservationStoreOperation     = core.ObservationStoreOperation
 )

@@ -57,6 +57,14 @@ Permissions: skawld.PermissionOptions{
 }
 ```
 
+Permission callbacks are called synchronously and receive the run context. They should return promptly when `ctx` is canceled.
+
+## Observability
+
+Set `AgentOptions.Logger` for structured `slog` records, or `AgentOptions.Observer` for metrics/tracing callbacks. Observations include stable fields such as session ID, run ID, provider ID, tool name, attempt number, duration, retryability, and error kind.
+
+Observer and logger payloads do not include raw prompts, provider request bodies, tool inputs, HTTP headers, API keys, or large tool results by default.
+
 ## SQLite Sessions
 
 Use `sessions/sqlite` for persistent sessions, messages, tasks, task dependencies, and invoked skills:

@@ -15,6 +15,7 @@ type ToolContext struct {
 	CWD             string
 	Filesystem      FilesystemResolver
 	FileReadTracker FileReadTracker
+	Observer        Observer
 	SessionID       string
 	RunID           string
 	SessionStore    SessionStore

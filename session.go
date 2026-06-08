@@ -3,6 +3,7 @@ package skawld
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ type Session struct {
 	store               core.SessionStore
 	providerMu          sync.Mutex
 	providerView        []core.Message
+	providerChars       int
 	fullHistory         []core.Message
 	invokedSkills       []core.InvokedSkillRecord
 	initialEvents       []core.Event
@@ -106,7 +108,7 @@ func newSession(agent *Agent, rec core.SessionRecord, providerView []core.Messag
 	created, _ := time.Parse(time.RFC3339Nano, rec.CreatedAt)
 	return &Session{
 		ID: rec.ID, CreatedAt: created, Meta: rec.Meta,
-		agent: agent, store: agent.store, providerView: providerView,
+		agent: agent, store: agent.store, providerView: providerView, providerChars: estimateMessagesProviderChars(providerView),
 		fullHistory: append([]core.Message(nil), providerView...), invokedSkills: append([]core.InvokedSkillRecord(nil), rec.InvokedSkills...),
 		initialEvents: append([]core.Event(nil), initialEvents...),
 		readTracker:   tools.NewFileReadTracker(),
@@ -193,36 +195,57 @@ func (s *Session) append(ctx context.Context, messages []core.Message) error {
 	s.providerMu.Lock()
 	defer s.providerMu.Unlock()
 	s.providerView = append(s.providerView, messages...)
+	s.providerChars += estimateMessagesProviderChars(messages)
 	s.fullHistory = append(s.fullHistory, messages...)
 	return nil
 }
 
-func (s *Session) compactProviderView(ctx context.Context, trigger string, emitter *eventEmitter) (bool, error) {
+func (s *Session) compactProviderView(ctx context.Context, runID string, trigger string, emitter *eventEmitter) (bool, error) {
 	strategy := s.agent.opts.CompactionStrategy
 	if s.agent.opts.DisableCompaction || strategy == nil {
 		return false, nil
+	}
+	system := s.agent.systemBlocks()
+	tools := s.agent.toolSchemas()
+	if trigger == compactionTriggerProactive {
+		estimated := s.estimatedProviderTokens()
+		if !s.shouldCompactProactively(estimated) {
+			return false, nil
+		}
 	}
 	s.providerMu.Lock()
 	messages := cloneMessages(s.providerView)
 	s.providerMu.Unlock()
 	messages = stripProviderOnlyCompactionMessages(messages)
-	system := s.agent.systemBlocks()
-	tokensBefore := estimateProviderTokens(system, s.agent.opts.Tools.Schemas(), messages)
+	tokensBefore := estimateProviderTokens(system, tools, messages)
 	if trigger == compactionTriggerProactive && !s.shouldCompactProactively(tokensBefore) {
 		return false, nil
 	}
+	start := time.Now()
 	result, err := strategy.Compact(ctx, CompactionRequest{
 		Provider:        s.agent.opts.Provider,
 		Model:           s.agent.opts.Model,
 		System:          system,
-		Tools:           s.agent.opts.Tools.Schemas(),
+		Tools:           tools,
 		Messages:        messages,
 		Trigger:         trigger,
 		ContextWindow:   s.agent.opts.Provider.ContextWindow(s.agent.opts.Model),
 		EstimatedTokens: tokensBefore,
 	})
-	if err != nil || !result.Changed {
-		return false, err
+	s.agent.observe(ctx, core.Observation{
+		Type:       core.ObservationCompaction,
+		Operation:  trigger,
+		SessionID:  s.ID,
+		RunID:      runID,
+		ProviderID: s.agent.opts.Provider.ID(),
+		DurationMS: time.Since(start).Milliseconds(),
+		Error:      err,
+	})
+	if err != nil {
+		return false, fmt.Errorf("compact provider view for session %q: %w", s.ID, err)
+	}
+	if !result.Changed {
+		return false, nil
 	}
 	next := stripProviderOnlyCompactionMessages(cloneMessages(result.Messages))
 	skills, err := s.loadInvokedSkills(ctx)
@@ -230,9 +253,10 @@ func (s *Session) compactProviderView(ctx context.Context, trigger string, emitt
 		return false, err
 	}
 	next = injectSkillReplayMessages(next, skills)
-	tokensAfter := estimateProviderTokens(system, s.agent.opts.Tools.Schemas(), next)
+	tokensAfter := estimateProviderTokens(system, tools, next)
 	s.providerMu.Lock()
 	s.providerView = next
+	s.providerChars = estimateMessagesProviderChars(next)
 	s.providerMu.Unlock()
 	if !emitter.Emit(core.Event{
 		Type:           core.EventCompaction,
@@ -272,6 +296,19 @@ func (s *Session) shouldCompactProactively(tokensBefore int) bool {
 }
 
 func estimateProviderTokens(system []core.SystemBlock, tools []core.ToolSchema, messages []core.Message) int {
+	chars := estimateStaticProviderChars(system, tools)
+	chars += estimateMessagesProviderChars(messages)
+	return tokensFromChars(chars)
+}
+
+func (s *Session) estimatedProviderTokens() int {
+	s.providerMu.Lock()
+	messageChars := s.providerChars
+	s.providerMu.Unlock()
+	return tokensFromChars(s.agent.staticProviderChars() + messageChars)
+}
+
+func estimateStaticProviderChars(system []core.SystemBlock, tools []core.ToolSchema) int {
 	chars := 0
 	for _, block := range system {
 		chars += len(block.Text) + 16
@@ -280,10 +317,19 @@ func estimateProviderTokens(system []core.SystemBlock, tools []core.ToolSchema, 
 		raw, _ := json.Marshal(tool)
 		chars += len(raw)
 	}
+	return chars
+}
+
+func estimateMessagesProviderChars(messages []core.Message) int {
+	chars := 0
 	for _, msg := range messages {
 		raw, _ := json.Marshal(msg)
 		chars += len(raw)
 	}
+	return chars
+}
+
+func tokensFromChars(chars int) int {
 	if chars == 0 {
 		return 0
 	}

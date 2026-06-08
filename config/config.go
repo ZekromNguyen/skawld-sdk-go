@@ -70,25 +70,28 @@ func Load(opts LoadOptions) (File, string, error) {
 			var err error
 			cwd, err = os.Getwd()
 			if err != nil {
-				return File{}, "", err
+				return File{}, "", fmt.Errorf("get working directory for config discovery: %w", err)
 			}
 		}
 		found, ok, err := findConfig(cwd)
 		if err != nil || !ok {
-			return File{}, "", err
+			if err != nil {
+				return File{}, "", fmt.Errorf("find config from %s: %w", cwd, err)
+			}
+			return File{}, "", nil
 		}
 		path = found
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return File{}, "", err
+		return File{}, "", fmt.Errorf("read config %s: %w", path, err)
 	}
 	var cfg File
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return File{}, "", fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return File{}, "", err
+		return File{}, "", fmt.Errorf("validate config %s: %w", path, err)
 	}
 	return cfg, path, nil
 }
@@ -100,26 +103,26 @@ func LoadAgentOptions(ctx context.Context, opts LoadOptions) (AgentOptions, stri
 	}
 	agentOpts, err := cfg.AgentOptions(ctx)
 	if err != nil {
-		return AgentOptions{}, "", err
+		return AgentOptions{}, "", fmt.Errorf("build agent options from config %s: %w", path, err)
 	}
 	return agentOpts, path, nil
 }
 
 func (c File) Validate() error {
 	if strings.TrimSpace(c.Provider) == "" {
-		return fmt.Errorf("config provider is required")
+		return core.NewConfigError("config provider is required")
 	}
 	switch c.Provider {
 	case "openai-responses", "openai-chat", "anthropic":
 	default:
-		return fmt.Errorf("unsupported provider %q", c.Provider)
+		return core.NewConfigError(fmt.Sprintf("unsupported provider %q", c.Provider))
 	}
 	if c.Model == "" {
-		return fmt.Errorf("config model is required")
+		return core.NewConfigError("config model is required")
 	}
 	for _, server := range c.MCPServers {
 		if err := server.Validate(); err != nil {
-			return err
+			return fmt.Errorf("config mcp server %q: %w", server.Name, err)
 		}
 	}
 	return nil
@@ -127,11 +130,11 @@ func (c File) Validate() error {
 
 func (c File) AgentOptions(ctx context.Context) (AgentOptions, error) {
 	if err := c.Validate(); err != nil {
-		return AgentOptions{}, err
+		return AgentOptions{}, fmt.Errorf("validate config before building agent options: %w", err)
 	}
 	provider, err := c.provider()
 	if err != nil {
-		return AgentOptions{}, err
+		return AgentOptions{}, fmt.Errorf("build provider from config: %w", err)
 	}
 	mode := c.PermissionMode
 	if mode == "" {
@@ -182,7 +185,7 @@ func (c File) provider() (core.Provider, error) {
 			DefaultHeaders: c.Anthropic.DefaultHeaders,
 		}), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider %q", c.Provider)
+		return nil, core.NewConfigError(fmt.Sprintf("unsupported provider %q", c.Provider))
 	}
 }
 

@@ -1,13 +1,16 @@
 package skawld
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1106,6 +1109,34 @@ func TestAgentSessionCreationDoesNotSerializeOnStoreWork(t *testing.T) {
 	}
 }
 
+type failingStore struct {
+	*sessions.InMemoryStore
+	err error
+}
+
+func (s failingStore) Create(ctx context.Context, id string, meta map[string]interface{}) (core.SessionRecord, error) {
+	return core.SessionRecord{}, s.err
+}
+
+func TestStoreErrorsAreWrappedWithOperationContext(t *testing.T) {
+	sentinel := errors.New("create failed")
+	agent, err := NewAgent(AgentOptions{
+		Provider:     &singleTextProvider{text: "done"},
+		Model:        "fake-model",
+		SessionStore: failingStore{InMemoryStore: sessions.NewInMemoryStore(), err: sentinel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = agent.Session(context.Background(), SessionOptions{})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected wrapped store error to preserve sentinel, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "store create session") {
+		t.Fatalf("expected operation context, got %v", err)
+	}
+}
+
 func TestAgentSessionCreationDoesNotConnectSlowMCP(t *testing.T) {
 	requested := make(chan struct{}, 1)
 	release := make(chan struct{})
@@ -1197,6 +1228,92 @@ func TestRuntimeLoadingDoesNotSerializeSkillsAndSubagentsBehindSlowMCP(t *testin
 	})
 	close(release)
 	for range handle.Events() {
+	}
+}
+
+type recordingObserver struct {
+	mu           sync.Mutex
+	observations []core.Observation
+}
+
+func (o *recordingObserver) Observe(ctx context.Context, observation core.Observation) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.observations = append(o.observations, observation)
+}
+
+func (o *recordingObserver) contains(kind core.ObservationType) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, observation := range o.observations {
+		if observation.Type == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func TestObserverAndLoggerReceiveOperationalEvents(t *testing.T) {
+	observer := &recordingObserver{}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	agent, err := NewAgent(AgentOptions{
+		Provider:    &fakeProvider{},
+		Model:       "fake-model",
+		Tools:       tools.DefaultTools(),
+		Logger:      logger,
+		Observer:    observer,
+		CWD:         ".",
+		Permissions: PermissionOptions{Mode: PermissionModeYolo},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Run(context.Background(), "read go.mod", RunOptions{}) {
+	}
+	for _, kind := range []core.ObservationType{
+		core.ObservationStoreOperation,
+		core.ObservationProviderAttempt,
+		core.ObservationToolExecution,
+	} {
+		if !observer.contains(kind) {
+			t.Fatalf("expected observer event %s, got %+v", kind, observer.observations)
+		}
+	}
+	logText := logs.String()
+	if !strings.Contains(logText, "provider attempt") || !strings.Contains(logText, "tool execution") || !strings.Contains(logText, "session_id") {
+		t.Fatalf("expected structured operational logs, got:\n%s", logText)
+	}
+	if strings.Contains(logText, "read go.mod") {
+		t.Fatalf("logger should not include raw prompt text, got:\n%s", logText)
+	}
+}
+
+func TestProviderErrorWrapperPreservesTypedSkawldError(t *testing.T) {
+	provider := &retryExhaustProvider{}
+	agent, err := NewAgent(AgentOptions{Provider: provider, Model: "fake-model", MaxRetries: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Session(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := session.buildProviderRequest(context.Background(), RunOptions{}, nil)
+	_, _, _, err = session.streamTurn(context.Background(), "run_1", req, newEventEmitter(context.Background(), nil))
+	if err == nil {
+		t.Fatal("expected provider error")
+	}
+	var skerr *core.SkawldError
+	if !errors.As(err, &skerr) || skerr.Kind != core.ErrorProvider || !skerr.Retryable {
+		t.Fatalf("expected wrapped retryable provider error, got %T %[1]v", err)
+	}
+	if !strings.Contains(err.Error(), "provider stream") {
+		t.Fatalf("expected operation context in error, got %v", err)
 	}
 }
 

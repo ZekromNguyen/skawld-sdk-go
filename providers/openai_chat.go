@@ -147,29 +147,29 @@ func (p *OpenAIChatCompletionsProvider) Stream(ctx context.Context, req core.Pro
 func (p *OpenAIChatCompletionsProvider) translateMessages(req core.ProviderRequest) []map[string]interface{} {
 	var out []map[string]interface{}
 	if len(req.System) > 0 {
-		text := ""
+		var text strings.Builder
 		for i, b := range req.System {
 			if i > 0 {
-				text += "\n\n"
+				text.WriteString("\n\n")
 			}
-			text += b.Text
+			text.WriteString(b.Text)
 		}
-		out = append(out, map[string]interface{}{"role": "system", "content": text})
+		out = append(out, map[string]interface{}{"role": "system", "content": text.String()})
 	}
 	for _, msg := range req.Messages {
 		if msg.Role == "assistant" {
-			text := ""
+			var text strings.Builder
 			var calls []map[string]interface{}
 			for _, b := range msg.Content {
 				if b.Type == core.BlockText {
-					text += b.Text
+					text.WriteString(b.Text)
 				}
 				if b.Type == core.BlockToolUse {
 					raw, _ := json.Marshal(b.Input)
 					calls = append(calls, map[string]interface{}{"id": b.ID, "type": "function", "function": map[string]interface{}{"name": b.Name, "arguments": string(raw)}})
 				}
 			}
-			m := map[string]interface{}{"role": "assistant", "content": text}
+			m := map[string]interface{}{"role": "assistant", "content": text.String()}
 			if len(calls) > 0 {
 				m["tool_calls"] = calls
 			}

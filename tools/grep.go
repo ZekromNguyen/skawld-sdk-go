@@ -1,7 +1,11 @@
 package tools
 
 import (
+	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -255,12 +259,13 @@ type fileMatches struct {
 func runGrepFallback(ctx core.ToolContext, input map[string]interface{}, searchRoot string) (string, error) {
 	mode := input["output_mode"].(string)
 	pat := input["pattern"].(string)
+	multiline := asBool(input["multiline"])
 
 	flags := ""
 	if asBool(input["-i"]) {
 		flags += "(?i)"
 	}
-	if asBool(input["multiline"]) {
+	if multiline {
 		flags += "(?s)(?m)" // dot matches newline and ^$ match lines
 	}
 	re, err := regexp.Compile(flags + pat)
@@ -275,6 +280,9 @@ func runGrepFallback(ctx core.ToolContext, input map[string]interface{}, searchR
 		}
 	}
 	globStr, _ := asString(input["glob"])
+	if !multiline {
+		return runGrepFallbackStreaming(ctx, input, searchRoot, re, globStr, typePatterns)
+	}
 
 	var results []fileMatches
 	fileLines := make(map[string][]string)
@@ -350,6 +358,292 @@ func runGrepFallback(ctx core.ToolContext, input map[string]interface{}, searchR
 		return renderContent(results, input, fileLines), nil
 	}
 	return "", nil
+}
+
+type grepOutputCollector struct {
+	mode      string
+	input     map[string]interface{}
+	headLimit int
+	lines     []string
+	counts    []string
+	bytes     int
+}
+
+const grepFallbackOutputByteLimit = 30000
+
+func newGrepOutputCollector(input map[string]interface{}) *grepOutputCollector {
+	headLimit := input["head_limit"].(int)
+	if headLimit < 0 {
+		headLimit = 0
+	}
+	return &grepOutputCollector{mode: input["output_mode"].(string), input: input, headLimit: headLimit}
+}
+
+func (c *grepOutputCollector) done() bool {
+	return (c.headLimit > 0 && c.lineCount() >= c.headLimit) || c.bytes >= grepFallbackOutputByteLimit
+}
+
+func (c *grepOutputCollector) addLine(line string) {
+	if c.done() {
+		return
+	}
+	if c.bytes+len(line)+1 > grepFallbackOutputByteLimit {
+		remaining := grepFallbackOutputByteLimit - c.bytes
+		if remaining <= 1 {
+			c.bytes = grepFallbackOutputByteLimit
+			return
+		}
+		line = line[:remaining-1]
+	}
+	c.bytes += len(line) + 1
+	c.lines = append(c.lines, line)
+}
+
+func (c *grepOutputCollector) addFile(rel string) {
+	c.addLine(rel)
+}
+
+func (c *grepOutputCollector) addCount(rel string, count int) {
+	if count > 0 {
+		if c.done() {
+			return
+		}
+		line := fmt.Sprintf("%s:%d", rel, count)
+		if c.bytes+len(line)+1 > grepFallbackOutputByteLimit {
+			c.bytes = grepFallbackOutputByteLimit
+			return
+		}
+		c.bytes += len(line) + 1
+		c.counts = append(c.counts, line)
+	}
+}
+
+func (c *grepOutputCollector) addContent(rel string, lineNo int, text string, isMatch bool) {
+	showLineNo := asBool(c.input["-n"])
+	if showLineNo {
+		sep := "-"
+		if isMatch {
+			sep = ":"
+		}
+		c.addLine(fmt.Sprintf("%s%s%d%s%s", rel, sep, lineNo, sep, text))
+		return
+	}
+	c.addLine(fmt.Sprintf("%s:%s", rel, text))
+}
+
+func (c *grepOutputCollector) String() string {
+	lines := c.lines
+	if c.mode == "count" {
+		lines = c.counts
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (c *grepOutputCollector) lineCount() int {
+	if c.mode == "count" {
+		return len(c.counts)
+	}
+	return len(c.lines)
+}
+
+func runGrepFallbackStreaming(ctx core.ToolContext, input map[string]interface{}, searchRoot string, re *regexp.Regexp, globStr string, typePatterns []string) (string, error) {
+	collector := newGrepOutputCollector(input)
+	err := filepath.WalkDir(searchRoot, func(path string, d os.DirEntry, err error) error {
+		if ctx.Context.Err() != nil {
+			return ctx.Context.Err()
+		}
+		if collector.done() {
+			return filepath.SkipAll
+		}
+		if err != nil || d.IsDir() {
+			if d != nil && d.IsDir() {
+				if d.Name() == ".git" || d.Name() == ".hg" || d.Name() == ".svn" {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(searchRoot, path)
+		rel = filepath.ToSlash(rel)
+		if !grepPathAllowed(rel, globStr, typePatterns) {
+			return nil
+		}
+		return scanGrepFile(ctx, path, rel, re, input, collector)
+	})
+	if err != nil {
+		return "", err
+	}
+	return collector.String(), nil
+}
+
+func grepPathAllowed(rel, globStr string, typePatterns []string) bool {
+	if globStr != "" && !matchGlob(globStr, rel) {
+		return false
+	}
+	if len(typePatterns) == 0 {
+		return true
+	}
+	for _, tp := range typePatterns {
+		if matchGlob(tp, rel) {
+			return true
+		}
+	}
+	return false
+}
+
+func scanGrepFile(ctx core.ToolContext, path, rel string, re *regexp.Regexp, input map[string]interface{}, collector *grepOutputCollector) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if hasNullByteReader(f) {
+		return nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil
+	}
+	switch collector.mode {
+	case "files_with_matches":
+		return scanGrepFileNameMode(ctx, f, rel, re, collector)
+	case "count":
+		return scanGrepCountMode(ctx, f, rel, re, collector)
+	case "content":
+		return scanGrepContentMode(ctx, f, rel, re, input, collector)
+	default:
+		return nil
+	}
+}
+
+func scanGrepFileNameMode(ctx core.ToolContext, r io.Reader, rel string, re *regexp.Regexp, collector *grepOutputCollector) error {
+	reader := bufio.NewReader(r)
+	for {
+		if err := ctx.Context.Err(); err != nil {
+			return err
+		}
+		line, err := reader.ReadString('\n')
+		if line != "" && re.MatchString(strings.TrimRight(line, "\r\n")) {
+			collector.addFile(rel)
+			return nil
+		}
+		if errorsIsEOF(err) {
+			return nil
+		}
+		if err != nil {
+			return nil
+		}
+	}
+}
+
+func scanGrepCountMode(ctx core.ToolContext, r io.Reader, rel string, re *regexp.Regexp, collector *grepOutputCollector) error {
+	reader := bufio.NewReader(r)
+	count := 0
+	for {
+		if err := ctx.Context.Err(); err != nil {
+			return err
+		}
+		line, err := reader.ReadString('\n')
+		if line != "" && re.MatchString(strings.TrimRight(line, "\r\n")) {
+			count++
+		}
+		if errorsIsEOF(err) {
+			collector.addCount(rel, count)
+			return nil
+		}
+		if err != nil {
+			return nil
+		}
+	}
+}
+
+func scanGrepContentMode(ctx core.ToolContext, r io.Reader, rel string, re *regexp.Regexp, input map[string]interface{}, collector *grepOutputCollector) error {
+	ctxA, ctxB := grepContext(input)
+	reader := bufio.NewReader(r)
+	var before []matchLine
+	var pendingAfter int
+	emitted := false
+	lastOutputLine := 0
+	for lineNo := 1; ; lineNo++ {
+		if err := ctx.Context.Err(); err != nil {
+			return err
+		}
+		line, err := reader.ReadString('\n')
+		if line == "" && errorsIsEOF(err) {
+			return nil
+		}
+		text := strings.TrimRight(line, "\r\n")
+		isMatch := re.MatchString(text)
+		if isMatch {
+			firstOutputLine := lineNo
+			if len(before) > 0 {
+				firstOutputLine = before[0].lineNo
+			}
+			if emitted && firstOutputLine > lastOutputLine+1 {
+				collector.addLine("--")
+			}
+			for _, prev := range before {
+				if prev.lineNo > lastOutputLine {
+					collector.addContent(rel, prev.lineNo, prev.text, false)
+					lastOutputLine = prev.lineNo
+				}
+			}
+			before = nil
+			if lineNo > lastOutputLine {
+				collector.addContent(rel, lineNo, text, true)
+				lastOutputLine = lineNo
+			}
+			pendingAfter = ctxA
+			emitted = true
+		} else if pendingAfter > 0 {
+			if lineNo > lastOutputLine {
+				collector.addContent(rel, lineNo, text, false)
+				lastOutputLine = lineNo
+			}
+			pendingAfter--
+		} else {
+			if ctxB > 0 {
+				before = append(before, matchLine{lineNo: lineNo, text: text})
+				if len(before) > ctxB {
+					copy(before, before[1:])
+					before = before[:ctxB]
+				}
+			}
+		}
+		if collector.done() {
+			return filepath.SkipAll
+		}
+		if errorsIsEOF(err) {
+			return nil
+		}
+		if err != nil {
+			return nil
+		}
+	}
+}
+
+func grepContext(input map[string]interface{}) (int, int) {
+	ctxA := 0
+	ctxB := 0
+	if c, ok := input["-C"].(int); ok {
+		return c, c
+	}
+	if a, ok := input["-A"].(int); ok {
+		ctxA = a
+	}
+	if b, ok := input["-B"].(int); ok {
+		ctxB = b
+	}
+	return ctxA, ctxB
+}
+
+func hasNullByteReader(r io.Reader) bool {
+	buf := make([]byte, 8192)
+	n, _ := io.ReadFull(r, buf)
+	return bytes.IndexByte(buf[:n], 0) >= 0
+}
+
+func errorsIsEOF(err error) bool {
+	return errors.Is(err, io.EOF)
 }
 
 func hasNullByteBytes(buf []byte) bool {

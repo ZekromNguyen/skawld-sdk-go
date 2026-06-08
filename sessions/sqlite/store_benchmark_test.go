@@ -10,7 +10,7 @@ import (
 )
 
 func BenchmarkStoreTaskSubjectUpdate(b *testing.B) {
-	for _, size := range []int{100, 1000, 10000} {
+	for _, size := range []int{100, 1000, 2500} {
 		b.Run(strconv.Itoa(size)+"_tasks", func(b *testing.B) {
 			ctx := context.Background()
 			store := openBenchmarkStore(b)
@@ -30,7 +30,7 @@ func BenchmarkStoreTaskSubjectUpdate(b *testing.B) {
 }
 
 func BenchmarkStoreTaskEdgeUpdate(b *testing.B) {
-	for _, size := range []int{100, 1000, 10000} {
+	for _, size := range []int{100, 1000} {
 		b.Run(strconv.Itoa(size)+"_tasks", func(b *testing.B) {
 			ctx := context.Background()
 			store := openBenchmarkStore(b)

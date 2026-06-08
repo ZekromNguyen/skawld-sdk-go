@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -58,6 +59,7 @@ type Options struct {
 	Rules       []Rule
 	CanUseTool  CanUseTool
 	ProjectRoot string
+	Observer    core.Observer
 }
 
 type PendingCall struct {
@@ -65,6 +67,8 @@ type PendingCall struct {
 	Tool      core.Tool
 	Input     map[string]interface{}
 	CWD       string
+	SessionID string
+	RunID     string
 }
 
 type Engine struct {
@@ -150,27 +154,29 @@ func (e *Engine) Resolve(ctx context.Context, call PendingCall) Decision {
 }
 
 func (e *Engine) callPermissionCallback(ctx context.Context, call PendingCall) (CanUseToolResponse, error) {
-	type callbackResult struct {
-		resp CanUseToolResponse
-		err  error
-	}
-	resultCh := make(chan callbackResult, 1)
-	go func() {
-		resp, err := e.opts.CanUseTool(ctx, CanUseToolRequest{
-			ToolName:  call.Tool.Name(),
-			ToolUseID: call.ToolUseID,
-			Input:     call.Input,
-			Summary:   call.Tool.Summarize(call.Input),
-			Mode:      e.opts.Mode,
+	start := time.Now()
+	resp, err := e.opts.CanUseTool(ctx, CanUseToolRequest{
+		ToolName:  call.Tool.Name(),
+		ToolUseID: call.ToolUseID,
+		Input:     call.Input,
+		Summary:   call.Tool.Summarize(call.Input),
+		Mode:      e.opts.Mode,
+	})
+	if e.opts.Observer != nil {
+		e.opts.Observer.Observe(ctx, core.Observation{
+			Type:       core.ObservationPermissionCallback,
+			Operation:  "can_use_tool",
+			SessionID:  call.SessionID,
+			RunID:      call.RunID,
+			ToolName:   call.Tool.Name(),
+			DurationMS: time.Since(start).Milliseconds(),
+			Error:      err,
 		})
-		resultCh <- callbackResult{resp: resp, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return CanUseToolResponse{}, ctx.Err()
-	case result := <-resultCh:
-		return result.resp, result.err
 	}
+	if err != nil {
+		return CanUseToolResponse{}, fmt.Errorf("permission callback for %s after %s: %w", call.Tool.Name(), time.Since(start), err)
+	}
+	return resp, nil
 }
 
 func modeDefault(tool core.Tool, mode core.PermissionMode) Decision {

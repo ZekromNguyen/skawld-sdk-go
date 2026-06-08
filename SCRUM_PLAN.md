@@ -360,7 +360,7 @@ work. It continues after the completed migration plan and keeps the same
 Scrum-aligned structure: implementation tasks, testing tasks, and acceptance
 criteria for each increment.
 
-Status updated after Sprint 12 implementation on 2026-06-07.
+Status updated after Sprint 13 implementation on 2026-06-08.
 
 ## Phase 10: Run Lifecycle And Provider Stream Safety
 
@@ -542,38 +542,38 @@ workspaces.
 
 Implementation tasks:
 
-- [ ] Add benchmark fixtures for long message histories, large tool registries,
+- [x] Add benchmark fixtures for long message histories, large tool registries,
       large workspaces, and large task graphs.
-- [ ] Cache stable system and tool token-estimate inputs.
-- [ ] Track approximate message token deltas when appending messages.
-- [ ] Recompute full token estimates only near compaction thresholds or after
+- [x] Cache stable system and tool token-estimate inputs.
+- [x] Track approximate message token deltas when appending messages.
+- [x] Recompute full token estimates only near compaction thresholds or after
       compaction.
-- [ ] Stream grep fallback file scanning where multiline mode is not requested.
-- [ ] Stop grep fallback rendering once `head_limit` and output caps are met.
-- [ ] Use `strings.Builder` in hot provider translation paths that currently
+- [x] Stream grep fallback file scanning where multiline mode is not requested.
+- [x] Stop grep fallback rendering once `head_limit` and output caps are met.
+- [x] Use `strings.Builder` in hot provider translation paths that currently
       concatenate repeated strings.
-- [ ] Use `slices` and `maps` package helpers where they simplify collection
+- [x] Use `slices` and `maps` package helpers where they simplify collection
       code without hiding deep-copy requirements.
-- [ ] Consider `sync.Pool` only after benchmarks show repeated large temporary
+- [x] Consider `sync.Pool` only after benchmarks show repeated large temporary
       allocations.
 
 Testing tasks:
 
-- [ ] Add benchmarks for `estimateProviderTokens`.
-- [ ] Add benchmarks for provider request translation.
-- [ ] Add benchmarks for grep fallback on large trees.
-- [ ] Add benchmarks for SQLite task updates.
-- [ ] Add allocation assertions for hot-path benchmarks where stable.
-- [ ] Run `go test -bench=. -benchmem` for targeted packages.
+- [x] Add benchmarks for `estimateProviderTokens`.
+- [x] Add benchmarks for provider request translation.
+- [x] Add benchmarks for grep fallback on large trees.
+- [x] Add benchmarks for SQLite task updates.
+- [x] Add allocation assertions for hot-path benchmarks where stable.
+- [x] Run `go test -bench=. -benchmem` for targeted packages.
 
 Acceptance criteria:
 
-- [ ] Token estimation cost grows with new messages in normal turns instead of
+- [x] Token estimation cost grows with new messages in normal turns instead of
       full history size.
-- [ ] Grep fallback memory is bounded by current file and output limits for
+- [x] Grep fallback memory is bounded by current file and output limits for
       non-multiline searches.
-- [ ] Performance refactors are backed by benchmark deltas.
-- [ ] No hot-path optimization weakens behavior covered by parity tests.
+- [x] Performance refactors are backed by benchmark deltas.
+- [x] No hot-path optimization weakens behavior covered by parity tests.
 
 ## Phase 15: Error Handling, Observability, And Operational Hooks
 
@@ -581,37 +581,37 @@ Goal: make production failures diagnosable without parsing model-facing text.
 
 Implementation tasks:
 
-- [ ] Wrap store, MCP, provider, and config errors with operation context using
+- [x] Wrap store, MCP, provider, and config errors with operation context using
       `%w`.
-- [ ] Preserve typed `*core.SkawldError` values through retry and stream
+- [x] Preserve typed `*core.SkawldError` values through retry and stream
       boundaries.
-- [ ] Use `errors.Join` for multi-close failures such as MCP client shutdown.
-- [ ] Separate SDK-facing typed errors from model-facing tool result strings.
-- [ ] Add optional structured logging through `*slog.Logger`.
-- [ ] Add stable log fields for session ID, run ID, provider ID, tool name,
+- [x] Use `errors.Join` for multi-close failures such as MCP client shutdown.
+- [x] Separate SDK-facing typed errors from model-facing tool result strings.
+- [x] Add optional structured logging through `*slog.Logger`.
+- [x] Add stable log fields for session ID, run ID, provider ID, tool name,
       attempt number, duration, retryability, and error kind.
-- [ ] Add an observer hook for provider attempts, tool execution, permission
+- [x] Add an observer hook for provider attempts, tool execution, permission
       callbacks, compaction, MCP calls, and store operations.
-- [ ] Add duration tracking for permission callbacks without spawning unbounded
+- [x] Add duration tracking for permission callbacks without spawning unbounded
       goroutines.
-- [ ] Document secret redaction rules for logs and observer payloads.
+- [x] Document secret redaction rules for logs and observer payloads.
 
 Testing tasks:
 
-- [ ] Add `errors.Is` and `errors.As` tests for provider, store, MCP, and
+- [x] Add `errors.Is` and `errors.As` tests for provider, store, MCP, and
       permission failures.
-- [ ] Add tests for `errors.Join` behavior during MCP close.
-- [ ] Add logger tests using a captured `slog.Handler`.
-- [ ] Add observer callback tests for successful and failed runs.
-- [ ] Add permission callback timeout/cancellation tests.
+- [x] Add tests for `errors.Join` behavior during MCP close.
+- [x] Add logger tests using a captured `slog.Handler`.
+- [x] Add observer callback tests for successful and failed runs.
+- [x] Add permission callback timeout/cancellation tests.
 
 Acceptance criteria:
 
-- [ ] Application code can classify important failures without string parsing.
-- [ ] Logs and observer events provide enough context to debug failed runs.
-- [ ] Observability hooks do not expose secrets or large raw payloads by
+- [x] Application code can classify important failures without string parsing.
+- [x] Logs and observer events provide enough context to debug failed runs.
+- [x] Observability hooks do not expose secrets or large raw payloads by
       default.
-- [ ] Permission callback behavior is measurable and cancellation-safe.
+- [x] Permission callback behavior is measurable and cancellation-safe.
 
 ## Phase 16: Package Boundaries And Maintainability
 
@@ -713,9 +713,9 @@ Sprint 12:
 
 Sprint 13:
 
-- [ ] Phase 14 benchmark baseline
-- [ ] Phase 14 token estimate and grep fallback optimization
-- [ ] Phase 15 typed errors and structured observability
+- [x] Phase 14 benchmark baseline
+- [x] Phase 14 token estimate and grep fallback optimization
+- [x] Phase 15 typed errors and structured observability
 
 Sprint 14:
 

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -304,6 +306,80 @@ func TestCanUseToolCallback(t *testing.T) {
 	}
 	if !reflect.DeepEqual(captured, expected) {
 		t.Fatalf("callback request mismatch\nexpected: %#v\nactual:   %#v", expected, captured)
+	}
+}
+
+type permissionObserver struct {
+	mu           sync.Mutex
+	observations []core.Observation
+}
+
+func (o *permissionObserver) Observe(ctx context.Context, observation core.Observation) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.observations = append(o.observations, observation)
+}
+
+func TestCanUseToolCallbackObservationIncludesDuration(t *testing.T) {
+	observer := &permissionObserver{}
+	bashTool := testTool{name: "Bash", scope: core.ToolScopeExec}
+	engine := newTestEngine(Options{
+		Observer: observer,
+		CanUseTool: func(ctx context.Context, req CanUseToolRequest) (CanUseToolResponse, error) {
+			time.Sleep(time.Millisecond)
+			return CanUseToolResponse{Behavior: "allow"}, nil
+		},
+	})
+	call := call("toolu_1", bashTool, map[string]interface{}{"command": "git status"})
+	call.SessionID = "s"
+	call.RunID = "r"
+	decision := engine.Resolve(context.Background(), call)
+	if decision.Decision != DecisionAllow {
+		t.Fatalf("expected allow, got %#v", decision)
+	}
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if len(observer.observations) != 1 {
+		t.Fatalf("expected one observation, got %+v", observer.observations)
+	}
+	observation := observer.observations[0]
+	if observation.Type != core.ObservationPermissionCallback || observation.SessionID != "s" || observation.RunID != "r" || observation.ToolName != "Bash" {
+		t.Fatalf("unexpected observation: %+v", observation)
+	}
+	if observation.DurationMS <= 0 {
+		t.Fatalf("expected duration to be recorded, got %+v", observation)
+	}
+}
+
+func TestCanUseToolCallbackReceivesCancelableContext(t *testing.T) {
+	bashTool := testTool{name: "Bash", scope: core.ToolScopeExec}
+	started := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	engine := newTestEngine(Options{
+		CanUseTool: func(ctx context.Context, req CanUseToolRequest) (CanUseToolResponse, error) {
+			close(started)
+			<-ctx.Done()
+			return CanUseToolResponse{}, ctx.Err()
+		},
+	})
+	done := make(chan Decision, 1)
+	go func() {
+		done <- engine.Resolve(ctx, call("toolu_1", bashTool, map[string]interface{}{"command": "git status"}))
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("permission callback did not start")
+	}
+	cancel()
+	select {
+	case decision := <-done:
+		if decision.Decision != DecisionDeny || !strings.Contains(decision.Reason, "permission callback failed or aborted") {
+			t.Fatalf("expected callback cancellation denial, got %#v", decision)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("permission callback did not return after context cancellation")
 	}
 }
 

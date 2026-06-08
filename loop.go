@@ -85,27 +85,27 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 			_ = emitter.Emit(abortedResult(total, started))
 			return
 		}
-		if _, err := s.compactProviderView(ctx, compactionTriggerProactive, emitter); err != nil {
+		if _, err := s.compactProviderView(ctx, runID, compactionTriggerProactive, emitter); err != nil {
 			emitRunError(emitter, err, total, started)
 			return
 		}
 		overlay := s.consumePendingSkillOverlay()
 		req := s.buildProviderRequest(ctx, opts, overlay)
-		assistant, stop, usage, err := s.streamTurn(ctx, req, emitter)
+		assistant, stop, usage, err := s.streamTurn(ctx, runID, req, emitter)
 		if err != nil {
 			if isAbortError(ctx, err) {
 				_ = emitter.Emit(abortedResult(total, started))
 				return
 			}
 			if isContextLengthError(err) {
-				compacted, compactErr := s.compactProviderView(ctx, compactionTriggerForced, emitter)
+				compacted, compactErr := s.compactProviderView(ctx, runID, compactionTriggerForced, emitter)
 				if compactErr != nil {
 					emitRunError(emitter, compactErr, total, started)
 					return
 				}
 				if compacted {
 					req = s.buildProviderRequest(ctx, opts, overlay)
-					assistant, stop, usage, err = s.streamTurn(ctx, req, emitter)
+					assistant, stop, usage, err = s.streamTurn(ctx, runID, req, emitter)
 					if err == nil {
 						goto turnSucceeded
 					}
@@ -179,21 +179,32 @@ func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions, ove
 	}
 	return core.ProviderRequest{
 		Model: model, System: system,
-		Tools: s.agent.opts.Tools.Schemas(), Messages: msgs,
+		Tools: s.agent.toolSchemas(), Messages: msgs,
 		MaxOutputTokens: maxOut, Temperature: opts.Temperature,
 		CachePrompt: true, Thinking: opts.Thinking, Effort: opts.Effort,
 		MaxRetries: s.agent.opts.MaxRetries,
 	}
 }
 
-func (s *Session) streamTurn(ctx context.Context, req core.ProviderRequest, emitter *eventEmitter) (core.Message, core.StopReason, core.Usage, error) {
+func (s *Session) streamTurn(ctx context.Context, runID string, req core.ProviderRequest, emitter *eventEmitter) (core.Message, core.StopReason, core.Usage, error) {
 	attempts := req.MaxRetries + 1
 	if attempts < 1 {
 		attempts = 1
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
+		start := time.Now()
 		msg, stop, usage, committed, err := s.streamTurnAttempt(ctx, req, emitter)
+		s.agent.observe(ctx, core.Observation{
+			Type:       core.ObservationProviderAttempt,
+			Operation:  "stream",
+			SessionID:  s.ID,
+			RunID:      runID,
+			ProviderID: s.agent.opts.Provider.ID(),
+			Attempt:    attempt + 1,
+			DurationMS: time.Since(start).Milliseconds(),
+			Error:      err,
+		})
 		if err == nil {
 			return msg, stop, usage, nil
 		}
@@ -201,6 +212,9 @@ func (s *Session) streamTurn(ctx context.Context, req core.ProviderRequest, emit
 		if ctx.Err() != nil || committed || !isRetryable(err) || attempt == attempts-1 {
 			break
 		}
+	}
+	if lastErr != nil {
+		return core.Message{}, core.StopError, core.Usage{}, fmt.Errorf("provider stream %s attempt failed: %w", s.agent.opts.Provider.ID(), lastErr)
 	}
 	return core.Message{}, core.StopError, core.Usage{}, lastErr
 }
@@ -348,7 +362,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, blocks []c
 		}
 	}
 	for _, batch := range batches {
-		calls := s.resolveToolCallPermissions(ctx, batch.calls, results, emitter)
+		calls := s.resolveToolCallPermissions(ctx, runID, batch.calls, results, emitter)
 		if !batch.parallel {
 			for _, call := range calls {
 				if results[call.index].Type == core.BlockToolResult {
@@ -363,7 +377,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, blocks []c
 	return results
 }
 
-func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []scheduledToolCall, results []core.ContentBlock, emitter *eventEmitter) []scheduledToolCall {
+func (s *Session) resolveToolCallPermissions(ctx context.Context, runID string, calls []scheduledToolCall, results []core.ContentBlock, emitter *eventEmitter) []scheduledToolCall {
 	ready := make([]scheduledToolCall, 0, len(calls))
 	asks := make([]scheduledToolCall, 0)
 	requests := make([]core.PermissionRequest, 0)
@@ -379,7 +393,7 @@ func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []schedu
 			ready = append(ready, call)
 			continue
 		}
-		decision := s.agent.perm.Evaluate(permissions.PendingCall{ToolUseID: call.block.ID, Tool: call.tool, Input: call.input, CWD: s.agent.opts.CWD})
+		decision := s.agent.perm.Evaluate(permissions.PendingCall{ToolUseID: call.block.ID, Tool: call.tool, Input: call.input, CWD: s.agent.opts.CWD, SessionID: s.ID, RunID: runID})
 		switch decision.Decision {
 		case permissions.DecisionAllow:
 			if decision.UpdatedInput != nil {
@@ -400,7 +414,7 @@ func (s *Session) resolveToolCallPermissions(ctx context.Context, calls []schedu
 		return ready
 	}
 	for _, call := range asks {
-		decision := s.agent.perm.Resolve(ctx, permissions.PendingCall{ToolUseID: call.block.ID, Tool: call.tool, Input: call.input, CWD: s.agent.opts.CWD})
+		decision := s.agent.perm.Resolve(ctx, permissions.PendingCall{ToolUseID: call.block.ID, Tool: call.tool, Input: call.input, CWD: s.agent.opts.CWD, SessionID: s.ID, RunID: runID})
 		if decision.Decision == permissions.DecisionDeny {
 			results[call.index] = core.ToolResultBlock(call.block.ID, "Tool call denied: "+decision.Reason, true)
 			continue
@@ -423,7 +437,7 @@ func (s *Session) executePreparedToolCall(ctx context.Context, runID string, cal
 	start := time.Now()
 	res, err := call.tool.Execute(call.input, core.ToolContext{
 		Context: ctx, CWD: s.agent.opts.CWD, Filesystem: s.agent.opts.FilesystemPolicy, FileReadTracker: s.readTracker,
-		SessionID: s.ID, RunID: runID, SessionStore: s.store,
+		Observer: s.agent, SessionID: s.ID, RunID: runID, SessionStore: s.store,
 		Emit: func(ev core.Event) { _ = emitter.Emit(ev) },
 		InvokeSkill: func(skillCtx context.Context, inv core.SkillInvocation) (core.ToolResult, error) {
 			return s.invokeSkill(skillCtx, inv, emitter)
@@ -441,10 +455,24 @@ func (s *Session) executePreparedToolCall(ctx context.Context, runID string, cal
 		isErr = res.IsError
 		content = res.Content
 	}
-	if !emitter.Emit(core.Event{Type: core.EventToolCallEnd, ToolUseID: call.block.ID, ToolName: call.tool.Name(), IsError: isErr, DurationMS: time.Since(start).Milliseconds()}) {
+	duration := time.Since(start).Milliseconds()
+	if !emitter.Emit(core.Event{Type: core.EventToolCallEnd, ToolUseID: call.block.ID, ToolName: call.tool.Name(), IsError: isErr, DurationMS: duration}) {
 		isErr = true
 		content = "Tool call aborted."
 	}
+	var observedErr error
+	if err != nil {
+		observedErr = err
+	}
+	s.agent.observe(ctx, core.Observation{
+		Type:       core.ObservationToolExecution,
+		Operation:  "execute",
+		SessionID:  s.ID,
+		RunID:      runID,
+		ToolName:   call.tool.Name(),
+		DurationMS: duration,
+		Error:      observedErr,
+	})
 	return core.ToolResultBlock(call.block.ID, content, isErr)
 }
 

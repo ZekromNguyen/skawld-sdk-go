@@ -43,6 +43,26 @@ func (e *SkawldError) Error() string {
 
 func (e *SkawldError) Unwrap() error { return e.Cause }
 
+func (e *SkawldError) Is(target error) bool {
+	if e == nil {
+		return target == nil
+	}
+	other, ok := target.(*SkawldError)
+	if !ok {
+		return false
+	}
+	if other.Kind != "" && e.Kind != other.Kind {
+		return false
+	}
+	if other.ToolName != "" && e.ToolName != other.ToolName {
+		return false
+	}
+	if other.Status != 0 && e.Status != other.Status {
+		return false
+	}
+	return true
+}
+
 func NewConfigError(message string) *SkawldError {
 	return &SkawldError{Kind: ErrorConfig, Message: message}
 }

@@ -2,9 +2,14 @@ package skawld
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
 	"github.com/skawld/skawld-sdk-go/permissions"
@@ -33,6 +38,8 @@ type AgentOptions struct {
 	SessionStore           core.SessionStore
 	CWD                    string
 	FilesystemPolicy       tools.FilesystemPolicy
+	Logger                 *slog.Logger
+	Observer               core.Observer
 	SystemPrompt           string
 	MaxRetries             int
 	MaxOutputTokens        *int
@@ -58,6 +65,9 @@ type Agent struct {
 	store     core.SessionStore
 	system    []core.SystemBlock
 	systemMu  sync.RWMutex
+	staticMu  sync.RWMutex
+	toolCache []core.ToolSchema
+	staticLen int
 	mcp       *mcp.Manager
 	skills    *skills.Manager
 	subagents *subagents.Registry
@@ -115,7 +125,8 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	if opts.AgentsDir == "" {
 		opts.AgentsDir = filepath.Join(opts.CWD, ".skawld", "agents")
 	}
-	a := &Agent{opts: opts, store: opts.SessionStore}
+	a := &Agent{opts: opts}
+	a.store = &observedSessionStore{inner: opts.SessionStore, agent: a}
 	if len(opts.MCPServers) > 0 {
 		a.mcp = mcp.NewManager(opts.MCPServers)
 	}
@@ -127,9 +138,10 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	}
 	a.perm = permissions.NewEngine(permissions.Options{
 		Mode: opts.Permissions.Mode, Rules: opts.Permissions.Rules,
-		CanUseTool: opts.Permissions.CanUseTool, ProjectRoot: opts.CWD,
+		CanUseTool: opts.Permissions.CanUseTool, ProjectRoot: opts.CWD, Observer: a,
 	})
 	a.system = buildSystemBlocks(opts.CWD, opts.Permissions.Mode, opts.Tools.Names(), opts.SystemPrompt)
+	a.refreshStaticProviderInputs(a.system)
 	return a, nil
 }
 
@@ -217,16 +229,18 @@ func (a *Agent) loadSubagents() error {
 }
 
 func (a *Agent) Close() error {
-	var mcpErr error
+	var errs []error
 	if a.mcp != nil {
-		mcpErr = a.mcp.Close()
+		if err := a.mcp.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if a.store != nil {
 		if err := a.store.Close(); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return mcpErr
+	return errors.Join(errs...)
 }
 
 func (a *Agent) Options() AgentOptions {
@@ -241,9 +255,11 @@ func (a *Agent) connectMCP(ctx context.Context) error {
 	}
 	a.mcpMu.Lock()
 	defer a.mcpMu.Unlock()
+	start := time.Now()
 	discovered, err := a.mcp.Connect(ctx, a.opts.Tools.Names())
+	a.observe(ctx, core.Observation{Type: core.ObservationMCPCall, Operation: "connect", DurationMS: time.Since(start).Milliseconds(), Error: err})
 	if err != nil {
-		return err
+		return fmt.Errorf("connect mcp servers: %w", err)
 	}
 	for _, tool := range discovered {
 		if err := a.opts.Tools.Register(tool); err != nil {
@@ -311,12 +327,33 @@ func (a *Agent) rebuildSystem() {
 	a.systemMu.Lock()
 	a.system = next
 	a.systemMu.Unlock()
+	a.refreshStaticProviderInputs(next)
 }
 
 func (a *Agent) systemBlocks() []core.SystemBlock {
 	a.systemMu.RLock()
 	defer a.systemMu.RUnlock()
-	return append([]core.SystemBlock(nil), a.system...)
+	return slices.Clone(a.system)
+}
+
+func (a *Agent) refreshStaticProviderInputs(system []core.SystemBlock) {
+	tools := a.opts.Tools.Schemas()
+	a.staticMu.Lock()
+	a.toolCache = slices.Clone(tools)
+	a.staticLen = estimateStaticProviderChars(system, tools)
+	a.staticMu.Unlock()
+}
+
+func (a *Agent) toolSchemas() []core.ToolSchema {
+	a.staticMu.RLock()
+	defer a.staticMu.RUnlock()
+	return slices.Clone(a.toolCache)
+}
+
+func (a *Agent) staticProviderChars() int {
+	a.staticMu.RLock()
+	defer a.staticMu.RUnlock()
+	return a.staticLen
 }
 
 func (a *Agent) providerForSubagent() core.Provider {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,12 +51,19 @@ func TestLoadValidatesMissingAndInvalidConfig(t *testing.T) {
 	}
 	if _, _, err := Load(LoadOptions{Path: path}); err == nil {
 		t.Fatal("expected missing provider error")
+	} else if !errors.Is(err, &core.SkawldError{Kind: core.ErrorConfig}) {
+		t.Fatalf("expected typed config error, got %T %[1]v", err)
 	}
 	if err := os.WriteFile(path, []byte(`{"provider":"unknown","model":"gpt-5"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := Load(LoadOptions{Path: path}); err == nil {
 		t.Fatal("expected unsupported provider error")
+	} else {
+		var skerr *core.SkawldError
+		if !errors.As(err, &skerr) || skerr.Kind != core.ErrorConfig {
+			t.Fatalf("expected typed config error through wrapping, got %T %[1]v", err)
+		}
 	}
 }
 

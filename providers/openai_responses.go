@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -33,15 +34,15 @@ func (p *OpenAIResponsesProvider) Stream(ctx context.Context, req core.ProviderR
 		if previousResponseID != "" {
 			payload["previous_response_id"] = previousResponseID
 		}
-		instructions := ""
+		var instructions strings.Builder
 		for i, b := range req.System {
 			if i > 0 {
-				instructions += "\n\n"
+				instructions.WriteString("\n\n")
 			}
-			instructions += b.Text
+			instructions.WriteString(b.Text)
 		}
-		if instructions != "" {
-			payload["instructions"] = instructions
+		if instructions.Len() > 0 {
+			payload["instructions"] = instructions.String()
 		}
 		if len(req.Tools) > 0 {
 			payload["tools"] = responsesTools(req.Tools)
@@ -168,18 +169,18 @@ func responsesInputAndPrevious(messages []core.Message) ([]map[string]interface{
 			}
 		}
 		if msg.Role == "assistant" {
-			text := ""
+			var text strings.Builder
 			for _, b := range msg.Content {
 				if b.Type == core.BlockText {
-					text += b.Text
+					text.WriteString(b.Text)
 				}
 				if b.Type == core.BlockToolUse {
 					raw, _ := json.Marshal(b.Input)
 					out = append(out, map[string]interface{}{"type": "function_call", "call_id": b.ID, "name": b.Name, "arguments": string(raw)})
 				}
 			}
-			if text != "" {
-				out = append(out, map[string]interface{}{"type": "message", "role": "assistant", "content": []map[string]interface{}{{"type": "output_text", "text": text}}})
+			if text.Len() > 0 {
+				out = append(out, map[string]interface{}{"type": "message", "role": "assistant", "content": []map[string]interface{}{{"type": "output_text", "text": text.String()}}})
 			}
 			continue
 		}

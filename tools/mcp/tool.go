@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -43,7 +44,20 @@ func (t *Tool) Validate(raw map[string]interface{}) (map[string]interface{}, err
 	return raw, nil
 }
 func (t *Tool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	return t.client.CallTool(ctx.Context, t.remote.Name, input)
+	start := time.Now()
+	result, err := t.client.CallTool(ctx.Context, t.remote.Name, input)
+	if ctx.Observer != nil {
+		ctx.Observer.Observe(ctx.Context, core.Observation{
+			Type:       core.ObservationMCPCall,
+			Operation:  "tool.call",
+			SessionID:  ctx.SessionID,
+			RunID:      ctx.RunID,
+			ToolName:   t.Name(),
+			DurationMS: time.Since(start).Milliseconds(),
+			Error:      err,
+		})
+	}
+	return result, err
 }
 func (t *Tool) Summarize(input map[string]interface{}) string {
 	return fmt.Sprintf("Call MCP tool %s/%s", t.serverName, t.remote.Name)

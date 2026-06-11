@@ -73,7 +73,7 @@ func (s *Session) runSubagent(ctx context.Context, inv core.SubagentInvocation, 
 		ToolConcurrency:        s.agent.opts.ToolConcurrency,
 		DisableCompaction:      true,
 		SkillsDir:              s.agent.opts.SkillsDir,
-		AgentsDir:              s.agent.opts.AgentsDir,
+		SubagentsDir:           s.agent.opts.SubagentsDir,
 		DisableSkills:          !allowsTool(def.Tools, "Skill"),
 		DisableSubagents:       !allowsTool(def.Tools, "Subagent"),
 	})

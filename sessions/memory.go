@@ -10,6 +10,7 @@ import (
 
 	"github.com/skawld/skawld-sdk-go/core"
 	idgen "github.com/skawld/skawld-sdk-go/internal/id"
+	"github.com/skawld/skawld-sdk-go/internal/jsoncopy"
 )
 
 type InMemoryStore struct {
@@ -41,15 +42,15 @@ func (s *InMemoryStore) Create(ctx context.Context, id string, meta map[string]i
 		id = idgen.New()
 	}
 	if rec, ok := s.sessions[id]; ok {
-		return cloneSessionRecord(rec), nil
+		return jsoncopy.SessionRecord(rec), nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if meta == nil {
 		meta = map[string]interface{}{}
 	}
-	rec := core.SessionRecord{ID: id, CreatedAt: now, UpdatedAt: now, Meta: cloneMap(meta)}
-	s.sessions[id] = cloneSessionRecord(rec)
-	return cloneSessionRecord(rec), nil
+	rec := core.SessionRecord{ID: id, CreatedAt: now, UpdatedAt: now, Meta: jsoncopy.Map(meta)}
+	s.sessions[id] = jsoncopy.SessionRecord(rec)
+	return jsoncopy.SessionRecord(rec), nil
 }
 
 func (s *InMemoryStore) Load(ctx context.Context, id string) (core.SessionRecord, bool, error) {
@@ -63,7 +64,7 @@ func (s *InMemoryStore) Load(ctx context.Context, id string) (core.SessionRecord
 		return core.SessionRecord{}, false, nil
 	}
 	rec.InvokedSkills = append([]core.InvokedSkillRecord(nil), s.invokedSkills[id]...)
-	return cloneSessionRecord(rec), true, nil
+	return jsoncopy.SessionRecord(rec), true, nil
 }
 
 func (s *InMemoryStore) LoadMessages(ctx context.Context, id string) ([]core.StoredMessage, error) {
@@ -72,7 +73,7 @@ func (s *InMemoryStore) LoadMessages(ctx context.Context, id string) ([]core.Sto
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := cloneStoredMessages(s.messages[id])
+	out := jsoncopy.StoredMessages(s.messages[id])
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out, nil
 }
@@ -87,14 +88,14 @@ func (s *InMemoryStore) AppendMessages(ctx context.Context, id string, messages 
 	existing := s.messages[id]
 	appended := make([]core.StoredMessage, 0, len(messages))
 	for i, msg := range messages {
-		appended = append(appended, core.StoredMessage{Seq: len(existing) + i + 1, AppendedAt: now, Message: cloneMessage(msg)})
+		appended = append(appended, core.StoredMessage{Seq: len(existing) + i + 1, AppendedAt: now, Message: jsoncopy.Message(msg)})
 	}
-	s.messages[id] = append(existing, cloneStoredMessages(appended)...)
+	s.messages[id] = append(existing, jsoncopy.StoredMessages(appended)...)
 	if rec, ok := s.sessions[id]; ok {
 		rec.UpdatedAt = now
 		s.sessions[id] = rec
 	}
-	return cloneStoredMessages(appended), nil
+	return jsoncopy.StoredMessages(appended), nil
 }
 
 func (s *InMemoryStore) UpdateMeta(ctx context.Context, id string, meta map[string]interface{}) (core.SessionRecord, error) {
@@ -111,11 +112,11 @@ func (s *InMemoryStore) UpdateMeta(ctx context.Context, id string, meta map[stri
 		rec.Meta = map[string]interface{}{}
 	}
 	for k, v := range meta {
-		rec.Meta[k] = cloneJSONValue(v)
+		rec.Meta[k] = jsoncopy.Value(v)
 	}
 	rec.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	s.sessions[id] = cloneSessionRecord(rec)
-	return cloneSessionRecord(rec), nil
+	s.sessions[id] = jsoncopy.SessionRecord(rec)
+	return jsoncopy.SessionRecord(rec), nil
 }
 
 func (s *InMemoryStore) SetInvokedSkills(ctx context.Context, id string, skills []core.InvokedSkillRecord) error {
@@ -136,7 +137,7 @@ func (s *InMemoryStore) List(ctx context.Context, limit, offset int) ([]core.Ses
 	defer s.mu.Unlock()
 	out := make([]core.SessionRecord, 0, len(s.sessions))
 	for _, rec := range s.sessions {
-		out = append(out, cloneSessionRecord(rec))
+		out = append(out, jsoncopy.SessionRecord(rec))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	if offset > len(out) {
@@ -176,13 +177,13 @@ func (s *InMemoryStore) CreateTask(ctx context.Context, sessionID string, input 
 		ID: strconv.Itoa(n), SessionID: sessionID, Subject: input.Subject,
 		Description: input.Description, ActiveForm: input.ActiveForm,
 		Status: core.TaskPending, Blocks: []string{}, BlockedBy: []string{},
-		Metadata: cloneMap(input.Metadata), CreatedAt: now, UpdatedAt: now,
+		Metadata: jsoncopy.Map(input.Metadata), CreatedAt: now, UpdatedAt: now,
 	}
 	if s.tasks[sessionID] == nil {
 		s.tasks[sessionID] = map[string]core.Task{}
 	}
-	s.tasks[sessionID][task.ID] = cloneTask(task)
-	return cloneTask(task), nil
+	s.tasks[sessionID][task.ID] = jsoncopy.Task(task)
+	return jsoncopy.Task(task), nil
 }
 
 func (s *InMemoryStore) GetTask(ctx context.Context, sessionID, taskID string) (core.Task, bool, error) {
@@ -192,7 +193,7 @@ func (s *InMemoryStore) GetTask(ctx context.Context, sessionID, taskID string) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	task, ok := s.tasks[sessionID][taskID]
-	return cloneTask(task), ok, nil
+	return jsoncopy.Task(task), ok, nil
 }
 
 func (s *InMemoryStore) ListTasks(ctx context.Context, sessionID string) ([]core.Task, error) {
@@ -203,7 +204,7 @@ func (s *InMemoryStore) ListTasks(ctx context.Context, sessionID string) ([]core
 	defer s.mu.Unlock()
 	out := make([]core.Task, 0, len(s.tasks[sessionID]))
 	for _, task := range s.tasks[sessionID] {
-		out = append(out, cloneTask(task))
+		out = append(out, jsoncopy.Task(task))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		ai, _ := strconv.Atoi(out[i].ID)
@@ -219,7 +220,7 @@ func (s *InMemoryStore) UpdateTask(ctx context.Context, sessionID, taskID string
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tasks := cloneTasks(s.tasks[sessionID])
+	tasks := cloneTaskMap(s.tasks[sessionID])
 	task, ok := tasks[taskID]
 	if !ok {
 		return core.Task{}, false, nil
@@ -250,7 +251,7 @@ func (s *InMemoryStore) UpdateTask(ctx context.Context, sessionID, taskID string
 			if v == nil {
 				delete(task.Metadata, k)
 			} else {
-				task.Metadata[k] = cloneJSONValue(v)
+				task.Metadata[k] = jsoncopy.Value(v)
 			}
 		}
 		if len(task.Metadata) == 0 {
@@ -267,7 +268,7 @@ func (s *InMemoryStore) UpdateTask(ctx context.Context, sessionID, taskID string
 	task.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	tasks[taskID] = task
 	s.tasks[sessionID] = tasks
-	return cloneTask(task), true, nil
+	return jsoncopy.Task(task), true, nil
 }
 
 func (s *InMemoryStore) DeleteTask(ctx context.Context, sessionID, taskID string) (bool, error) {
@@ -276,7 +277,7 @@ func (s *InMemoryStore) DeleteTask(ctx context.Context, sessionID, taskID string
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tasks := cloneTasks(s.tasks[sessionID])
+	tasks := cloneTaskMap(s.tasks[sessionID])
 	task, ok := tasks[taskID]
 	if !ok {
 		return false, nil
@@ -289,117 +290,12 @@ func (s *InMemoryStore) DeleteTask(ctx context.Context, sessionID, taskID string
 
 func (s *InMemoryStore) Close() error { return nil }
 
-func cloneTasks(tasks map[string]core.Task) map[string]core.Task {
+func cloneTaskMap(tasks map[string]core.Task) map[string]core.Task {
 	out := make(map[string]core.Task, len(tasks))
 	for id, task := range tasks {
-		out[id] = cloneTask(task)
+		out[id] = jsoncopy.Task(task)
 	}
 	return out
-}
-
-func cloneSessionRecord(rec core.SessionRecord) core.SessionRecord {
-	rec.Meta = cloneMap(rec.Meta)
-	rec.InvokedSkills = append([]core.InvokedSkillRecord(nil), rec.InvokedSkills...)
-	return rec
-}
-
-func cloneStoredMessages(messages []core.StoredMessage) []core.StoredMessage {
-	out := make([]core.StoredMessage, len(messages))
-	for i, msg := range messages {
-		out[i] = msg
-		out[i].Message = cloneMessage(msg.Message)
-	}
-	return out
-}
-
-func cloneMessage(msg core.Message) core.Message {
-	msg.Content = cloneContentBlocks(msg.Content)
-	msg.ProviderMetadata = cloneProviderMetadata(msg.ProviderMetadata)
-	return msg
-}
-
-func cloneProviderMetadata(meta core.MessageProviderMetadata) core.MessageProviderMetadata {
-	if meta.OpenAIResponses == nil {
-		return meta
-	}
-	responses := *meta.OpenAIResponses
-	responses.OutputItems = cloneMapSlice(responses.OutputItems)
-	meta.OpenAIResponses = &responses
-	return meta
-}
-
-func cloneContentBlocks(blocks []core.ContentBlock) []core.ContentBlock {
-	out := make([]core.ContentBlock, len(blocks))
-	for i, block := range blocks {
-		out[i] = cloneContentBlock(block)
-	}
-	return out
-}
-
-func cloneContentBlock(block core.ContentBlock) core.ContentBlock {
-	block.Input = cloneMap(block.Input)
-	block.Content = cloneJSONValue(block.Content)
-	if nested, ok := block.Content.([]core.ContentBlock); ok {
-		block.Content = cloneContentBlocks(nested)
-	}
-	if nested, ok := block.Content.(core.ContentBlock); ok {
-		block.Content = cloneContentBlock(nested)
-	}
-	if block.Source != nil {
-		source := *block.Source
-		block.Source = &source
-	}
-	return block
-}
-
-func cloneTask(task core.Task) core.Task {
-	task.Blocks = append([]string(nil), task.Blocks...)
-	task.BlockedBy = append([]string(nil), task.BlockedBy...)
-	task.Metadata = cloneMap(task.Metadata)
-	return task
-}
-
-func cloneMap(in map[string]interface{}) map[string]interface{} {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(in))
-	for k, v := range in {
-		out[k] = cloneJSONValue(v)
-	}
-	return out
-}
-
-func cloneMapSlice(in []map[string]interface{}) []map[string]interface{} {
-	if in == nil {
-		return nil
-	}
-	out := make([]map[string]interface{}, len(in))
-	for i, item := range in {
-		out[i] = cloneMap(item)
-	}
-	return out
-}
-
-func cloneJSONValue(value interface{}) interface{} {
-	switch v := value.(type) {
-	case map[string]interface{}:
-		return cloneMap(v)
-	case []map[string]interface{}:
-		return cloneMapSlice(v)
-	case []interface{}:
-		out := make([]interface{}, len(v))
-		for i := range v {
-			out[i] = cloneJSONValue(v[i])
-		}
-		return out
-	case []core.ContentBlock:
-		return cloneContentBlocks(v)
-	case core.ContentBlock:
-		return cloneContentBlock(v)
-	default:
-		return v
-	}
 }
 
 func checkContext(ctx context.Context) error {

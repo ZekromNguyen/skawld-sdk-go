@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/skawld/skawld-sdk-go/internal/frontmatter"
 )
 
 type Definition struct {
@@ -77,24 +78,15 @@ func LoadFile(path string) (Definition, error) {
 	if err != nil {
 		return Definition{}, err
 	}
-	body := string(raw)
-	meta := map[string]interface{}{}
-	if strings.HasPrefix(body, "---\n") || strings.HasPrefix(body, "---\r\n") {
-		normalized := strings.ReplaceAll(body, "\r\n", "\n")
-		rest := strings.TrimPrefix(normalized, "---\n")
-		if end := strings.Index(rest, "\n---\n"); end >= 0 {
-			meta = parseFrontmatter(rest[:end])
-			body = rest[end+len("\n---\n"):]
-		}
-	}
+	doc := frontmatter.ParseDocument(string(raw))
 	def := Definition{
-		Name:         stringMeta(meta, "name"),
-		Description:  stringMeta(meta, "description"),
-		WhenToUse:    stringMeta(meta, "when_to_use"),
-		ArgumentHint: stringMeta(meta, "argument_hint"),
-		AllowedTools: stringSliceMeta(meta, "allowed_tools"),
-		Model:        core.ModelID(stringMeta(meta, "model")),
-		Body:         strings.TrimSpace(body),
+		Name:         doc.Metadata.String("name"),
+		Description:  doc.Metadata.String("description"),
+		WhenToUse:    doc.Metadata.String("when_to_use"),
+		ArgumentHint: doc.Metadata.String("argument_hint"),
+		AllowedTools: doc.Metadata.Strings("allowed_tools"),
+		Model:        core.ModelID(doc.Metadata.String("model")),
+		Body:         strings.TrimSpace(doc.Body),
 		Path:         path,
 	}
 	return def, nil
@@ -118,74 +110,3 @@ func (m *Manager) Get(name string) (Definition, bool) {
 }
 
 func (m *Manager) Loaded() bool { return m.loaded }
-
-func parseFrontmatter(input string) map[string]interface{} {
-	out := map[string]interface{}{}
-	lines := strings.Split(input, "\n")
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		if val == "" {
-			var items []string
-			for i+1 < len(lines) {
-				next := strings.TrimSpace(lines[i+1])
-				if !strings.HasPrefix(next, "- ") {
-					break
-				}
-				items = append(items, trimYAMLScalar(strings.TrimSpace(strings.TrimPrefix(next, "- "))))
-				i++
-			}
-			out[key] = items
-			continue
-		}
-		if strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]") {
-			inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(val, "["), "]"))
-			if inner == "" {
-				out[key] = []string{}
-				continue
-			}
-			var items []string
-			for _, part := range strings.Split(inner, ",") {
-				items = append(items, trimYAMLScalar(strings.TrimSpace(part)))
-			}
-			out[key] = items
-			continue
-		}
-		out[key] = trimYAMLScalar(val)
-	}
-	return out
-}
-
-func stringMeta(meta map[string]interface{}, key string) string {
-	s, _ := meta[key].(string)
-	return s
-}
-
-func stringSliceMeta(meta map[string]interface{}, key string) []string {
-	switch vals := meta[key].(type) {
-	case []string:
-		out := make([]string, 0, len(vals))
-		for _, v := range vals {
-			if strings.TrimSpace(v) != "" {
-				out = append(out, strings.TrimSpace(v))
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func trimYAMLScalar(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.Trim(value, `"'`)
-	return value
-}

@@ -8,7 +8,7 @@ import (
 )
 
 func TestTypedFilesystemInputParsersNormalizeValues(t *testing.T) {
-	read, err := parseReadInput(map[string]interface{}{"file_path": "a.txt", "offset": float64(0), "limit": "2"})
+	read, err := parseReadInput(map[string]interface{}{"file_path": "a.txt", "offset": float64(0), "limit": float64(2)})
 	if err != nil {
 		t.Fatal(err)
 	}

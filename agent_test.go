@@ -1021,12 +1021,12 @@ func TestAgentRuntimeLoadingDoesNotMutateCallerRegistry(t *testing.T) {
 	}
 	callerRegistry := tools.NewRegistry()
 	agent, err := NewAgent(AgentOptions{
-		Provider:    &singleTextProvider{text: "done"},
-		Model:       "fake-model",
-		Tools:       callerRegistry,
-		SkillsDir:   skillsDir,
-		AgentsDir:   agentsDir,
-		Permissions: PermissionOptions{Mode: PermissionModeYolo},
+		Provider:     &singleTextProvider{text: "done"},
+		Model:        "fake-model",
+		Tools:        callerRegistry,
+		SkillsDir:    skillsDir,
+		SubagentsDir: agentsDir,
+		Permissions:  PermissionOptions{Mode: PermissionModeYolo},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1200,12 +1200,12 @@ func TestRuntimeLoadingDoesNotSerializeSkillsAndSubagentsBehindSlowMCP(t *testin
 	defer server.Close()
 
 	agent, err := NewAgent(AgentOptions{
-		Provider:    &singleTextProvider{text: "done"},
-		Model:       "fake-model",
-		SkillsDir:   skillsDir,
-		AgentsDir:   agentsDir,
-		MCPServers:  []mcp.ServerConfig{{Name: "slow", HTTP: &mcp.HTTPServerConfig{URL: server.URL}}},
-		Permissions: PermissionOptions{Mode: PermissionModeYolo},
+		Provider:     &singleTextProvider{text: "done"},
+		Model:        "fake-model",
+		SkillsDir:    skillsDir,
+		SubagentsDir: agentsDir,
+		MCPServers:   []mcp.ServerConfig{{Name: "slow", HTTP: &mcp.HTTPServerConfig{URL: server.URL}}},
+		Permissions:  PermissionOptions{Mode: PermissionModeYolo},
 	})
 	if err != nil {
 		t.Fatal(err)

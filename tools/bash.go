@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/skawld/skawld-sdk-go/core"
@@ -57,25 +56,11 @@ func (BashTool) Scope() core.ToolScope { return core.ToolScopeExec }
 func (BashTool) ParallelSafe() bool    { return false }
 
 func (t BashTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	command, ok := asString(raw["command"])
-	if !ok || strings.TrimSpace(command) == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "Bash: 'command' must be a non-empty string.")
+	parsed, err := parseBashInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	timeout := 120000
-	if tval, ok := coerceNonNegativeInt(raw, "timeout_ms"); ok {
-		timeout = tval
-	}
-	if timeout < 100 {
-		timeout = 100
-	}
-	if timeout > 1800000 {
-		timeout = 1800000
-	}
-	out := map[string]interface{}{"command": command, "timeout_ms": timeout}
-	if desc, ok := asString(raw["description"]); ok {
-		out["description"] = desc
-	}
-	return out, nil
+	return parsed.mapValue(), nil
 }
 
 func (t BashTool) Summarize(input map[string]interface{}) string {

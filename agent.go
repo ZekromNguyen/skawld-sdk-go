@@ -51,7 +51,7 @@ type AgentOptions struct {
 	DisableCompaction      bool
 	MCPServers             []mcp.ServerConfig
 	SkillsDir              string
-	AgentsDir              string
+	SubagentsDir           string
 	DisableSkills          bool
 	DisableSubagents       bool
 }
@@ -122,8 +122,8 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	if opts.SkillsDir == "" {
 		opts.SkillsDir = filepath.Join(opts.CWD, ".skawld", "skills")
 	}
-	if opts.AgentsDir == "" {
-		opts.AgentsDir = filepath.Join(opts.CWD, ".skawld", "agents")
+	if opts.SubagentsDir == "" {
+		opts.SubagentsDir = filepath.Join(opts.CWD, ".skawld", "agents")
 	}
 	a := &Agent{opts: opts}
 	a.store = &observedSessionStore{inner: opts.SessionStore, agent: a}
@@ -134,7 +134,7 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 		a.skills = skills.NewManager(opts.SkillsDir)
 	}
 	if !opts.DisableSubagents {
-		a.subagents = subagents.NewRegistry(opts.AgentsDir)
+		a.subagents = subagents.NewRegistry(opts.SubagentsDir)
 	}
 	a.perm = permissions.NewEngine(permissions.Options{
 		Mode: opts.Permissions.Mode, Rules: opts.Permissions.Rules,

@@ -36,9 +36,9 @@ type Session struct {
 	agent               *Agent
 	store               core.SessionStore
 	providerMu          sync.Mutex
-	providerView        []core.Message
+	providerHistory     []core.Message
 	providerChars       int
-	fullHistory         []core.Message
+	completeHistory     []core.Message
 	invokedSkills       []core.InvokedSkillRecord
 	initialEvents       []core.Event
 	pendingSkillOverlay *skillOverlay
@@ -104,12 +104,12 @@ func (h *RunHandle) Done() <-chan struct{} {
 	return h.done
 }
 
-func newSession(agent *Agent, rec core.SessionRecord, providerView []core.Message, initialEvents []core.Event) *Session {
+func newSession(agent *Agent, rec core.SessionRecord, providerHistory []core.Message, initialEvents []core.Event) *Session {
 	created, _ := time.Parse(time.RFC3339Nano, rec.CreatedAt)
 	return &Session{
 		ID: rec.ID, CreatedAt: created, Meta: rec.Meta,
-		agent: agent, store: agent.store, providerView: providerView, providerChars: estimateMessagesProviderChars(providerView),
-		fullHistory: append([]core.Message(nil), providerView...), invokedSkills: append([]core.InvokedSkillRecord(nil), rec.InvokedSkills...),
+		agent: agent, store: agent.store, providerHistory: providerHistory, providerChars: estimateMessagesProviderChars(providerHistory),
+		completeHistory: append([]core.Message(nil), providerHistory...), invokedSkills: append([]core.InvokedSkillRecord(nil), rec.InvokedSkills...),
 		initialEvents: append([]core.Event(nil), initialEvents...),
 		readTracker:   tools.NewFileReadTracker(),
 	}
@@ -126,7 +126,7 @@ func (s *Session) consumeInitialEvents() []core.Event {
 func (s *Session) MessageCount() int {
 	s.providerMu.Lock()
 	defer s.providerMu.Unlock()
-	return len(s.providerView)
+	return len(s.providerHistory)
 }
 
 func (s *Session) Run(ctx context.Context, prompt string, opts RunOptions) <-chan core.Event {
@@ -194,13 +194,13 @@ func (s *Session) append(ctx context.Context, messages []core.Message) error {
 	}
 	s.providerMu.Lock()
 	defer s.providerMu.Unlock()
-	s.providerView = append(s.providerView, messages...)
+	s.providerHistory = append(s.providerHistory, messages...)
 	s.providerChars += estimateMessagesProviderChars(messages)
-	s.fullHistory = append(s.fullHistory, messages...)
+	s.completeHistory = append(s.completeHistory, messages...)
 	return nil
 }
 
-func (s *Session) compactProviderView(ctx context.Context, runID string, trigger string, emitter *eventEmitter) (bool, error) {
+func (s *Session) compactProviderHistory(ctx context.Context, runID string, trigger string, emitter *eventEmitter) (bool, error) {
 	strategy := s.agent.opts.CompactionStrategy
 	if s.agent.opts.DisableCompaction || strategy == nil {
 		return false, nil
@@ -214,7 +214,7 @@ func (s *Session) compactProviderView(ctx context.Context, runID string, trigger
 		}
 	}
 	s.providerMu.Lock()
-	messages := cloneMessages(s.providerView)
+	messages := cloneMessages(s.providerHistory)
 	s.providerMu.Unlock()
 	messages = stripProviderOnlyCompactionMessages(messages)
 	tokensBefore := estimateProviderTokens(system, tools, messages)
@@ -255,7 +255,7 @@ func (s *Session) compactProviderView(ctx context.Context, runID string, trigger
 	next = injectSkillReplayMessages(next, skills)
 	tokensAfter := estimateProviderTokens(system, tools, next)
 	s.providerMu.Lock()
-	s.providerView = next
+	s.providerHistory = next
 	s.providerChars = estimateMessagesProviderChars(next)
 	s.providerMu.Unlock()
 	if !emitter.Emit(core.Event{

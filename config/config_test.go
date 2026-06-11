@@ -97,7 +97,7 @@ func TestAgentOptionsBuildsProviderAndSettings(t *testing.T) {
 	if opts.Model != "gpt-4o" || opts.PermissionMode != core.PermissionModeAcceptEdits || !opts.DisableCompaction {
 		t.Fatalf("unexpected options: %+v", opts)
 	}
-	if opts.CompactionThreshold != 0.5 || len(opts.MCPServers) != 1 || opts.AgentsDir != "agents" {
+	if opts.CompactionThreshold != 0.5 || len(opts.MCPServers) != 1 || opts.SubagentsDir != "agents" {
 		t.Fatalf("unexpected options: %+v", opts)
 	}
 }

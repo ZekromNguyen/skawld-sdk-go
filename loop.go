@@ -85,7 +85,7 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 			_ = emitter.Emit(abortedResult(total, started))
 			return
 		}
-		if _, err := s.compactProviderView(ctx, runID, compactionTriggerProactive, emitter); err != nil {
+		if _, err := s.compactProviderHistory(ctx, runID, compactionTriggerProactive, emitter); err != nil {
 			emitRunError(emitter, err, total, started)
 			return
 		}
@@ -98,7 +98,7 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 				return
 			}
 			if isContextLengthError(err) {
-				compacted, compactErr := s.compactProviderView(ctx, runID, compactionTriggerForced, emitter)
+				compacted, compactErr := s.compactProviderHistory(ctx, runID, compactionTriggerForced, emitter)
 				if compactErr != nil {
 					emitRunError(emitter, compactErr, total, started)
 					return
@@ -163,7 +163,7 @@ func (s *Session) runLoop(ctx context.Context, prompt string, opts RunOptions, e
 
 func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions, overlay *skillOverlay) core.ProviderRequest {
 	s.providerMu.Lock()
-	msgs := append([]core.Message(nil), s.providerView...)
+	msgs := append([]core.Message(nil), s.providerHistory...)
 	s.providerMu.Unlock()
 	model := s.agent.opts.Model
 	system := s.agent.systemBlocks()

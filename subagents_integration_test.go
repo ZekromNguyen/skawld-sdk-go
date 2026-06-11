@@ -92,11 +92,11 @@ Review only.
 	}
 	provider := &subagentProvider{}
 	agent, err := NewAgent(AgentOptions{
-		Provider:  provider,
-		Model:     "parent-model",
-		Tools:     reg,
-		AgentsDir: dir,
-		SkillsDir: filepath.Join(t.TempDir(), "missing-skills"),
+		Provider:     provider,
+		Model:        "parent-model",
+		Tools:        reg,
+		SubagentsDir: dir,
+		SkillsDir:    filepath.Join(t.TempDir(), "missing-skills"),
 		Permissions: PermissionOptions{
 			Mode: PermissionModeYolo,
 		},

@@ -31,14 +31,11 @@ func (ReadTool) Scope() core.ToolScope { return core.ToolScopeRead }
 func (ReadTool) ParallelSafe() bool    { return true }
 
 func (t ReadTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	path, ok := asString(raw["file_path"])
-	if !ok || strings.TrimSpace(path) == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "file_path must be a non-empty string")
+	parsed, err := parseReadInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	out := map[string]interface{}{"file_path": path}
-	out["offset"] = max(1, asInt(raw["offset"], 1))
-	out["limit"] = max(1, asInt(raw["limit"], 2000))
-	return out, nil
+	return parsed.mapValue(), nil
 }
 
 func (t ReadTool) Summarize(input map[string]interface{}) string {

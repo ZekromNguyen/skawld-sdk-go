@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/skawld/skawld-sdk-go/core"
 )
@@ -25,15 +24,11 @@ func (WriteTool) InputSchema() map[string]interface{} {
 func (WriteTool) Scope() core.ToolScope { return core.ToolScopeWrite }
 func (WriteTool) ParallelSafe() bool    { return false }
 func (t WriteTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	path, ok := asString(raw["file_path"])
-	if !ok || strings.TrimSpace(path) == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "file_path must be a non-empty string")
+	parsed, err := parseWriteInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	content, ok := asString(raw["content"])
-	if !ok {
-		return nil, core.NewToolExecutionError(t.Name(), "content must be a string")
-	}
-	return map[string]interface{}{"file_path": path, "content": content}, nil
+	return parsed.mapValue(), nil
 }
 func (t WriteTool) Summarize(input map[string]interface{}) string {
 	return fmt.Sprintf("Write %dB to %s", len([]byte(input["content"].(string))), input["file_path"])

@@ -22,6 +22,6 @@ func AgentOptionsFromConfig(opts config.AgentOptions) AgentOptions {
 		DisableCompaction:   opts.DisableCompaction,
 		MCPServers:          opts.MCPServers,
 		SkillsDir:           opts.SkillsDir,
-		AgentsDir:           opts.AgentsDir,
+		SubagentsDir:        opts.SubagentsDir,
 	}
 }

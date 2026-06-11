@@ -26,15 +26,11 @@ func (GlobTool) InputSchema() map[string]interface{} {
 func (GlobTool) Scope() core.ToolScope { return core.ToolScopeRead }
 func (GlobTool) ParallelSafe() bool    { return true }
 func (t GlobTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	pattern, ok := asString(raw["pattern"])
-	if !ok || pattern == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "pattern must be a non-empty string")
+	parsed, err := parseGlobInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	out := map[string]interface{}{"pattern": filepath.ToSlash(pattern)}
-	if p, ok := asString(raw["path"]); ok {
-		out["path"] = p
-	}
-	return out, nil
+	return parsed.mapValue(), nil
 }
 func (t GlobTool) Summarize(input map[string]interface{}) string {
 	if p, ok := asString(input["path"]); ok && p != "" {

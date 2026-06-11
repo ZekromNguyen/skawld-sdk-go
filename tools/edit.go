@@ -30,19 +30,11 @@ func (EditTool) InputSchema() map[string]interface{} {
 func (EditTool) Scope() core.ToolScope { return core.ToolScopeWrite }
 func (EditTool) ParallelSafe() bool    { return false }
 func (t EditTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	path, ok := asString(raw["file_path"])
-	if !ok || strings.TrimSpace(path) == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "file_path must be a non-empty string")
+	parsed, err := parseEditInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	oldString, ok := asString(raw["old_string"])
-	if !ok {
-		return nil, core.NewToolExecutionError(t.Name(), "old_string must be a string")
-	}
-	newString, ok := asString(raw["new_string"])
-	if !ok {
-		return nil, core.NewToolExecutionError(t.Name(), "new_string must be a string")
-	}
-	return map[string]interface{}{"file_path": path, "old_string": oldString, "new_string": newString, "replace_all": asBool(raw["replace_all"])}, nil
+	return parsed.mapValue(), nil
 }
 func (t EditTool) Summarize(input map[string]interface{}) string {
 	mode := "replace one"

@@ -22,22 +22,11 @@ func (TaskCreateTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{"subject": map[string]interface{}{"type": "string"}, "description": map[string]interface{}{"type": "string"}, "active_form": map[string]interface{}{"type": "string"}, "metadata": map[string]interface{}{"type": "object"}}, "required": []string{"subject", "description"}}
 }
 func (t TaskCreateTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	subject, ok := asString(raw["subject"])
-	if !ok || subject == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "subject is required")
+	parsed, err := parseTaskCreateInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	desc, ok := asString(raw["description"])
-	if !ok {
-		return nil, core.NewToolExecutionError(t.Name(), "description is required")
-	}
-	out := map[string]interface{}{"subject": subject, "description": desc}
-	if s, ok := asString(raw["active_form"]); ok {
-		out["active_form"] = s
-	}
-	if m, ok := raw["metadata"].(map[string]interface{}); ok {
-		out["metadata"] = m
-	}
-	return out, nil
+	return parsed.mapValue(), nil
 }
 func (t TaskCreateTool) Summarize(input map[string]interface{}) string {
 	return "Create task: " + input["subject"].(string)
@@ -85,11 +74,11 @@ func (TaskGetTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string"}}, "required": []string{"id"}}
 }
 func (t TaskGetTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	id, ok := asString(raw["id"])
-	if !ok || id == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "id is required")
+	parsed, err := parseTaskGetInput(raw, t.Name())
+	if err != nil {
+		return nil, err
 	}
-	return map[string]interface{}{"id": id}, nil
+	return parsed.mapValue(), nil
 }
 func (TaskGetTool) Summarize(input map[string]interface{}) string {
 	return "Get task #" + input["id"].(string)
@@ -131,47 +120,11 @@ func (TaskUpdateTool) InputSchema() map[string]interface{} {
 	}
 }
 func (t TaskUpdateTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	id, ok := asString(raw["id"])
-	if !ok || id == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "id is required")
+	parsed, err := parseTaskUpdateInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	out := map[string]interface{}{"id": id}
-	for _, key := range []string{"subject", "description", "active_form", "owner"} {
-		if s, ok := asString(raw[key]); ok {
-			out[key] = s
-		}
-	}
-	if status, ok := asString(raw["status"]); ok && status != "" {
-		st, err := parseTaskStatus(status)
-		if err != nil {
-			return nil, core.NewToolExecutionError(t.Name(), err.Error())
-		}
-		out["status"] = string(st)
-	}
-	if metadata, exists := raw["metadata"]; exists {
-		m, ok := metadata.(map[string]interface{})
-		if !ok {
-			return nil, core.NewToolExecutionError(t.Name(), "metadata must be an object")
-		}
-		out["metadata"] = m
-	}
-	for _, key := range []string{"add_blocks", "add_blocked_by", "remove_blocks", "remove_blocked_by"} {
-		ids, ok, err := stringList(raw, key)
-		if err != nil {
-			return nil, core.NewToolExecutionError(t.Name(), err.Error())
-		}
-		if ok {
-			out[key] = ids
-		}
-	}
-	if v, exists := raw["delete"]; exists {
-		b, ok := v.(bool)
-		if !ok {
-			return nil, core.NewToolExecutionError(t.Name(), "delete must be a boolean")
-		}
-		out["delete"] = b
-	}
-	return out, nil
+	return parsed.mapValue(), nil
 }
 func (TaskUpdateTool) Summarize(input map[string]interface{}) string {
 	return "Update task #" + input["id"].(string)
@@ -230,28 +183,5 @@ func parseTaskStatus(status string) (core.TaskStatus, error) {
 		return st, nil
 	default:
 		return "", fmt.Errorf("status must be one of: pending, in_progress, completed, deleted")
-	}
-}
-
-func stringList(raw map[string]interface{}, key string) ([]string, bool, error) {
-	v, exists := raw[key]
-	if !exists {
-		return nil, false, nil
-	}
-	switch vals := v.(type) {
-	case []string:
-		return append([]string(nil), vals...), true, nil
-	case []interface{}:
-		out := make([]string, 0, len(vals))
-		for _, item := range vals {
-			s, ok := item.(string)
-			if !ok || s == "" {
-				return nil, false, fmt.Errorf("%s must contain non-empty strings", key)
-			}
-			out = append(out, s)
-		}
-		return out, true, nil
-	default:
-		return nil, false, fmt.Errorf("%s must be an array of strings", key)
 	}
 }

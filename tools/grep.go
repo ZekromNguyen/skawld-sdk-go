@@ -44,67 +44,12 @@ func (GrepTool) InputSchema() map[string]interface{} {
 func (GrepTool) Scope() core.ToolScope { return core.ToolScopeRead }
 func (GrepTool) ParallelSafe() bool    { return true }
 
-func coerceNonNegativeInt(raw map[string]interface{}, key string) (int, bool) {
-	if val, ok := raw[key]; ok {
-		switch n := val.(type) {
-		case float64:
-			return int(n), true
-		case int:
-			return int(n), true
-		case string:
-			i, _ := strconv.Atoi(n)
-			return i, true
-		}
-	}
-	return -1, false
-}
-
 func (t GrepTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
-	pattern, ok := asString(raw["pattern"])
-	if !ok || pattern == "" {
-		return nil, core.NewToolExecutionError(t.Name(), "pattern is required and must be a non-empty string")
+	parsed, err := parseGrepInput(raw)
+	if err != nil {
+		return nil, err
 	}
-	out := map[string]interface{}{
-		"pattern":     pattern,
-		"output_mode": "files_with_matches",
-	}
-	if mode, ok := asString(raw["output_mode"]); ok && mode != "" {
-		switch mode {
-		case "files_with_matches", "content", "count":
-			out["output_mode"] = mode
-		default:
-			return nil, core.NewToolExecutionError(t.Name(), "output_mode must be one of: files_with_matches, content, count")
-		}
-	}
-	if p, ok := asString(raw["path"]); ok {
-		out["path"] = p
-	}
-	if g, ok := asString(raw["glob"]); ok {
-		out["glob"] = filepath.ToSlash(g)
-	}
-	if typ, ok := asString(raw["type"]); ok {
-		out["type"] = typ
-	}
-	out["-i"] = asBool(raw["-i"])
-	out["-n"] = asBool(raw["-n"])
-	out["multiline"] = asBool(raw["multiline"])
-
-	if a, ok := coerceNonNegativeInt(raw, "-A"); ok && a >= 0 {
-		out["-A"] = a
-	}
-	if b, ok := coerceNonNegativeInt(raw, "-B"); ok && b >= 0 {
-		out["-B"] = b
-	}
-	if c, ok := coerceNonNegativeInt(raw, "-C"); ok && c >= 0 {
-		out["-C"] = c
-	}
-	if hl, ok := coerceNonNegativeInt(raw, "head_limit"); ok && hl >= 0 {
-		out["head_limit"] = hl
-	} else {
-		out["head_limit"] = 250 // default
-	}
-
-	return out, nil
+	return parsed.mapValue(), nil
 }
 
 func (t GrepTool) Summarize(input map[string]interface{}) string {

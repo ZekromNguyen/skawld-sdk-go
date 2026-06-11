@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/providers"
 	"github.com/skawld/skawld-sdk-go/tools/mcp"
 )
 
@@ -24,7 +23,7 @@ type File struct {
 	ToolConcurrency int                 `json:"tool_concurrency,omitempty"`
 	Compaction      *CompactionConfig   `json:"compaction,omitempty"`
 	SkillsDir       string              `json:"skills_dir,omitempty"`
-	AgentsDir       string              `json:"agents_dir,omitempty"`
+	SubagentsDir    string              `json:"agents_dir,omitempty"`
 	MCPServers      []mcp.ServerConfig  `json:"mcp_servers,omitempty"`
 	OpenAI          ProviderConfig      `json:"openai,omitempty"`
 	Anthropic       ProviderConfig      `json:"anthropic,omitempty"`
@@ -59,7 +58,7 @@ type AgentOptions struct {
 	DisableCompaction   bool
 	MCPServers          []mcp.ServerConfig
 	SkillsDir           string
-	AgentsDir           string
+	SubagentsDir        string
 }
 
 func Load(opts LoadOptions) (File, string, error) {
@@ -97,11 +96,18 @@ func Load(opts LoadOptions) (File, string, error) {
 }
 
 func LoadAgentOptions(ctx context.Context, opts LoadOptions) (AgentOptions, string, error) {
+	return LoadAgentOptionsWithFactory(ctx, opts, DefaultProviderFactory{})
+}
+
+// LoadAgentOptionsWithFactory loads a config file and builds AgentOptions using
+// the supplied ProviderFactory. Callers that need to test config loading
+// without concrete provider imports should inject their own factory.
+func LoadAgentOptionsWithFactory(ctx context.Context, opts LoadOptions, factory ProviderFactory) (AgentOptions, string, error) {
 	cfg, path, err := Load(opts)
 	if err != nil {
 		return AgentOptions{}, "", err
 	}
-	agentOpts, err := cfg.AgentOptions(ctx)
+	agentOpts, err := cfg.AgentOptionsWithFactory(ctx, factory)
 	if err != nil {
 		return AgentOptions{}, "", fmt.Errorf("build agent options from config %s: %w", path, err)
 	}
@@ -129,10 +135,17 @@ func (c File) Validate() error {
 }
 
 func (c File) AgentOptions(ctx context.Context) (AgentOptions, error) {
+	return c.AgentOptionsWithFactory(ctx, DefaultProviderFactory{})
+}
+
+// AgentOptionsWithFactory builds AgentOptions using the supplied
+// ProviderFactory. Callers that need to test config without concrete provider
+// imports should inject their own factory.
+func (c File) AgentOptionsWithFactory(ctx context.Context, factory ProviderFactory) (AgentOptions, error) {
 	if err := c.Validate(); err != nil {
 		return AgentOptions{}, fmt.Errorf("validate config before building agent options: %w", err)
 	}
-	provider, err := c.provider()
+	provider, err := factory.NewProvider(ctx, c)
 	if err != nil {
 		return AgentOptions{}, fmt.Errorf("build provider from config: %w", err)
 	}
@@ -160,33 +173,8 @@ func (c File) AgentOptions(ctx context.Context) (AgentOptions, error) {
 		DisableCompaction:   disableCompaction,
 		MCPServers:          append([]mcp.ServerConfig(nil), c.MCPServers...),
 		SkillsDir:           c.SkillsDir,
-		AgentsDir:           c.AgentsDir,
+		SubagentsDir:        c.SubagentsDir,
 	}, nil
-}
-
-func (c File) provider() (core.Provider, error) {
-	switch c.Provider {
-	case "openai-responses":
-		return providers.NewOpenAIResponsesProvider(providers.OpenAIOptions{
-			APIKey:         c.OpenAI.APIKey,
-			BaseURL:        c.OpenAI.BaseURL,
-			DefaultHeaders: c.OpenAI.DefaultHeaders,
-		}), nil
-	case "openai-chat":
-		return providers.NewOpenAIChatCompletionsProvider(providers.OpenAIOptions{
-			APIKey:         c.OpenAI.APIKey,
-			BaseURL:        c.OpenAI.BaseURL,
-			DefaultHeaders: c.OpenAI.DefaultHeaders,
-		}), nil
-	case "anthropic":
-		return providers.NewAnthropicProvider(providers.AnthropicOptions{
-			APIKey:         c.Anthropic.APIKey,
-			BaseURL:        c.Anthropic.BaseURL,
-			DefaultHeaders: c.Anthropic.DefaultHeaders,
-		}), nil
-	default:
-		return nil, core.NewConfigError(fmt.Sprintf("unsupported provider %q", c.Provider))
-	}
 }
 
 func findConfig(cwd string) (string, bool, error) {

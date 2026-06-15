@@ -95,8 +95,8 @@ func TestChatViewAppendToolCalls(t *testing.T) {
 func TestChatViewResult(t *testing.T) {
 	cv := NewChatView(80, 20, DefaultTheme())
 	ev := core.Event{
-		Type:      core.EventResult,
-		Subtype:   "success",
+		Type:       core.EventResult,
+		Subtype:    "success",
 		DurationMS: 1234,
 		TotalUsage: core.Usage{InputTokens: 500, OutputTokens: 200},
 	}

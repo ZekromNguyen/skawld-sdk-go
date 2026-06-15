@@ -259,11 +259,11 @@ type cronField struct {
 }
 
 type cronFields struct {
-	minute   cronField
-	hour     cronField
-	dom      cronField // day of month
-	month    cronField
-	dow      cronField // day of week (0=Sunday)
+	minute cronField
+	hour   cronField
+	dom    cronField // day of month
+	month  cronField
+	dow    cronField // day of week (0=Sunday)
 }
 
 func parseCronFields(expression string) (cronFields, error) {
@@ -273,11 +273,11 @@ func parseCronFields(expression string) (cronFields, error) {
 	}
 
 	parsers := []struct {
-		name  string
-		min   int
-		max   int
-		raw   string
-		out   *cronField
+		name string
+		min  int
+		max  int
+		raw  string
+		out  *cronField
 	}{
 		{"minute", 0, 59, fields[0], nil},
 		{"hour", 0, 23, fields[1], nil},
@@ -400,4 +400,3 @@ func FormatCronDescription(expression string) string {
 	return fmt.Sprintf("At minute %s of hour %s on day-of-month %s in month %s (dow: %s)",
 		fields[0], fields[1], fields[2], fields[3], fields[4])
 }
-

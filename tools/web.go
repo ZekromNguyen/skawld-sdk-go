@@ -18,7 +18,7 @@ import (
 // WebSearchTool searches the web using DuckDuckGo HTML and returns results.
 type WebSearchTool struct{}
 
-func (WebSearchTool) Name() string        { return "WebSearch" }
+func (WebSearchTool) Name() string { return "WebSearch" }
 func (WebSearchTool) Description() string {
 	return "Search the web using a search query. Returns a list of results with titles, URLs, and snippets."
 }
@@ -39,8 +39,8 @@ func (WebSearchTool) InputSchema() map[string]interface{} {
 		"required": []string{"query"},
 	}
 }
-func (WebSearchTool) Scope() core.ToolScope       { return core.ToolScopeRead }
-func (WebSearchTool) ParallelSafe() bool          { return true }
+func (WebSearchTool) Scope() core.ToolScope { return core.ToolScopeRead }
+func (WebSearchTool) ParallelSafe() bool    { return true }
 
 func (t WebSearchTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	query, _ := asString(raw["query"])
@@ -94,7 +94,7 @@ func (t WebSearchTool) Summarize(input map[string]interface{}) string {
 // WebFetchTool fetches content from a URL and returns the extracted text.
 type WebFetchTool struct{}
 
-func (WebFetchTool) Name() string        { return "WebFetch" }
+func (WebFetchTool) Name() string { return "WebFetch" }
 func (WebFetchTool) Description() string {
 	return "Fetch content from a URL. Returns the page text content, stripping HTML tags. Useful for reading web pages or API responses."
 }
@@ -115,8 +115,8 @@ func (WebFetchTool) InputSchema() map[string]interface{} {
 		"required": []string{"url"},
 	}
 }
-func (WebFetchTool) Scope() core.ToolScope       { return core.ToolScopeRead }
-func (WebFetchTool) ParallelSafe() bool          { return true }
+func (WebFetchTool) Scope() core.ToolScope { return core.ToolScopeRead }
+func (WebFetchTool) ParallelSafe() bool    { return true }
 
 func (t WebFetchTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	u, _ := asString(raw["url"])
@@ -164,9 +164,9 @@ var httpClient = &http.Client{
 
 // SearchResult holds one search result.
 type SearchResult struct {
-	Title    string
-	URL      string
-	Snippet  string
+	Title   string
+	URL     string
+	Snippet string
 }
 
 // duckDuckGoSearch queries DuckDuckGo HTML and parses results.

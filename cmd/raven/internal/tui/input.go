@@ -23,43 +23,43 @@ type Key struct {
 type KeyCode int
 
 const (
-	KeyNone       KeyCode = iota
-	KeyEnter              // Enter / Return
-	KeyTab                // Tab
-	KeyEscape             // Escape
-	KeyBackspace          // Backspace
-	KeyDelete             // Delete
-	KeyUp                 // Arrow up
-	KeyDown               // Arrow down
-	KeyLeft               // Arrow left
-	KeyRight              // Arrow right
-	KeyHome               // Home
-	KeyEnd                // End
-	KeyPageUp             // Page Up
-	KeyPageDown           // Page Down
-	KeyF1                 // F1
-	KeyF2                 // F2
-	KeyF3                 // F3
-	KeyF4                 // F4
-	KeyF5                 // F5
-	KeyF6                 // F6
-	KeyF7                 // F7
-	KeyF8                 // F8
-	KeyF9                 // F9
-	KeyF10                // F10
-	KeyF11                // F11
-	KeyF12                // F12
-	KeyCtrlA              // Ctrl+A
-	KeyCtrlC              // Ctrl+C
-	KeyCtrlD              // Ctrl+D
-	KeyCtrlE              // Ctrl+E
-	KeyCtrlK              // Ctrl+K
-	KeyCtrlL              // Ctrl+L
-	KeyCtrlP              // Ctrl+P
-	KeyCtrlR              // Ctrl+R
-	KeyCtrlU              // Ctrl+U
-	KeyCtrlW              // Ctrl+W
-	KeyPaste              // Bracketed paste block
+	KeyNone      KeyCode = iota
+	KeyEnter             // Enter / Return
+	KeyTab               // Tab
+	KeyEscape            // Escape
+	KeyBackspace         // Backspace
+	KeyDelete            // Delete
+	KeyUp                // Arrow up
+	KeyDown              // Arrow down
+	KeyLeft              // Arrow left
+	KeyRight             // Arrow right
+	KeyHome              // Home
+	KeyEnd               // End
+	KeyPageUp            // Page Up
+	KeyPageDown          // Page Down
+	KeyF1                // F1
+	KeyF2                // F2
+	KeyF3                // F3
+	KeyF4                // F4
+	KeyF5                // F5
+	KeyF6                // F6
+	KeyF7                // F7
+	KeyF8                // F8
+	KeyF9                // F9
+	KeyF10               // F10
+	KeyF11               // F11
+	KeyF12               // F12
+	KeyCtrlA             // Ctrl+A
+	KeyCtrlC             // Ctrl+C
+	KeyCtrlD             // Ctrl+D
+	KeyCtrlE             // Ctrl+E
+	KeyCtrlK             // Ctrl+K
+	KeyCtrlL             // Ctrl+L
+	KeyCtrlP             // Ctrl+P
+	KeyCtrlR             // Ctrl+R
+	KeyCtrlU             // Ctrl+U
+	KeyCtrlW             // Ctrl+W
+	KeyPaste             // Bracketed paste block
 )
 
 // KeyEvent converts the raw key event to a KeyCode.
@@ -307,10 +307,10 @@ func parseCSI(seq string, key *Key) KeyCode {
 
 // HistorySearch tracks Ctrl+R reverse-i-search state.
 type HistorySearch struct {
-	active    bool
-	query     string
-	matchIdx  int
-	matches   []int // indices into LineEditor.History
+	active   bool
+	query    string
+	matchIdx int
+	matches  []int // indices into LineEditor.History
 }
 
 // LineEditor provides a readline-style line input with history, multi-line
@@ -318,7 +318,7 @@ type HistorySearch struct {
 type LineEditor struct {
 	Prompt           string
 	History          []string
-	historyPos       int    // current position in history (-1 = new input)
+	historyPos       int // current position in history (-1 = new input)
 	pos              int
 	buf              []rune
 	screen           *Screen

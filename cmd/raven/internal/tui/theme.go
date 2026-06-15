@@ -9,7 +9,7 @@ package tui
 
 // Color represents a terminal color using ANSI 256-color codes.
 type Color struct {
-	Code256 int    // ANSI 256-color code (0-255)
+	Code256  int    // ANSI 256-color code (0-255)
 	Fallback string // ANSI 16-color fallback name (e.g., "cyan", "red")
 }
 
@@ -35,25 +35,25 @@ func (c Color) DimFg() string {
 
 // Primary Palette — ANSI-safe, works on light + dark terminals
 var (
-	RavenBlack   = Color{Code256: 232, Fallback: "black"}       // #1a1a2e — deepest bg
-	DeepGray     = Color{Code256: 236, Fallback: "dark gray"}    // #2d2d44 — panels, borders
-	DarkSurface  = Color{Code256: 233, Fallback: "black"}       // #16162a — deepest bg
-	ElectricBlue = Color{Code256: 81, Fallback: "cyan"}          // #4fc3f7 — primary accent
-	Silver       = Color{Code256: 249, Fallback: "dark gray"}    // #b0bec5 — secondary text
-	SoftPurple   = Color{Code256: 99, Fallback: "magenta"}       // #7c4dff — thinking/planning
-	SuccessGreen = Color{Code256: 71, Fallback: "green"}         // #66bb6a — success, done
-	WarningAmber = Color{Code256: 214, Fallback: "yellow"}       // #ffa726 — warnings, attention
-	ErrorRed     = Color{Code256: 203, Fallback: "red"}          // #ef5350 — errors, failures
-	MutedTeal    = Color{Code256: 73, Fallback: "cyan"}          // #4db6ac — info, tool names
+	RavenBlack   = Color{Code256: 232, Fallback: "black"}     // #1a1a2e — deepest bg
+	DeepGray     = Color{Code256: 236, Fallback: "dark gray"} // #2d2d44 — panels, borders
+	DarkSurface  = Color{Code256: 233, Fallback: "black"}     // #16162a — deepest bg
+	ElectricBlue = Color{Code256: 81, Fallback: "cyan"}       // #4fc3f7 — primary accent
+	Silver       = Color{Code256: 249, Fallback: "dark gray"} // #b0bec5 — secondary text
+	SoftPurple   = Color{Code256: 99, Fallback: "magenta"}    // #7c4dff — thinking/planning
+	SuccessGreen = Color{Code256: 71, Fallback: "green"}      // #66bb6a — success, done
+	WarningAmber = Color{Code256: 214, Fallback: "yellow"}    // #ffa726 — warnings, attention
+	ErrorRed     = Color{Code256: 203, Fallback: "red"}       // #ef5350 — errors, failures
+	MutedTeal    = Color{Code256: 73, Fallback: "cyan"}       // #4db6ac — info, tool names
 )
 
 // Opacity multipliers for the raven silhouette density levels.
 const (
-	DensitySolid  = 1.0  // █
-	DensityDark   = 0.7  // ▓
-	DensityMid    = 0.45 // ▒
-	DensityLight  = 0.25 // ░
-	DensityEdge   = 0.10 // (space only)
+	DensitySolid = 1.0  // █
+	DensityDark  = 0.7  // ▓
+	DensityMid   = 0.45 // ▒
+	DensityLight = 0.25 // ░
+	DensityEdge  = 0.10 // (space only)
 )
 
 // Theme holds the active color scheme. Respects NO_COLOR and TERM=dumb.

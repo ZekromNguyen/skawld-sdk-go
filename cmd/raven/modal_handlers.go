@@ -243,11 +243,11 @@ func loadSessions(agent *skawld.Agent, current *skawld.Session) []tui.SessionInf
 		}
 
 		sessions = append(sessions, tui.SessionInfo{
-			ID:       rec.ID,
-			Name:     name,
-			Topic:    topic,
-			Active:   rec.ID == currentID,
-			TimeAgo:  formatTimeAgo(rec.UpdatedAt),
+			ID:      rec.ID,
+			Name:    name,
+			Topic:   topic,
+			Active:  rec.ID == currentID,
+			TimeAgo: formatTimeAgo(rec.UpdatedAt),
 		})
 	}
 	return sessions

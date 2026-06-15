@@ -113,11 +113,11 @@ func (wv *WelcomeView) RenderSplash(buf *Buffer) {
 		borderWidth = 60
 	}
 	borderLine := wv.Theme.DimText(BoxTL + Repeat(BoxH, borderWidth) + BoxTR)
-	buf.SetRow(row, padTo(hPad-2) + borderLine)
+	buf.SetRow(row, padTo(hPad-2)+borderLine)
 	row++
 
 	// Empty line inside border
-	buf.SetRow(row, padTo(hPad-2) + wv.Theme.DimText(BoxV) + padTo(borderWidth) + wv.Theme.DimText(BoxV))
+	buf.SetRow(row, padTo(hPad-2)+wv.Theme.DimText(BoxV)+padTo(borderWidth)+wv.Theme.DimText(BoxV))
 	row++
 
 	// ─── Raven Silhouette ────────────────────────────────────────
@@ -144,7 +144,7 @@ func (wv *WelcomeView) RenderSplash(buf *Buffer) {
 	if titlePad < 0 {
 		titlePad = 0
 	}
-	buf.SetRow(row, padTo(titlePad) + wv.Theme.AccentText(title))
+	buf.SetRow(row, padTo(titlePad)+wv.Theme.AccentText(title))
 	row++
 
 	// Empty line
@@ -157,7 +157,7 @@ func (wv *WelcomeView) RenderSplash(buf *Buffer) {
 	if tagPad < 0 {
 		tagPad = 0
 	}
-	buf.SetRow(row, padTo(tagPad) + wv.Theme.DimText(tagline))
+	buf.SetRow(row, padTo(tagPad)+wv.Theme.DimText(tagline))
 	row++
 
 	// Empty line
@@ -165,9 +165,9 @@ func (wv *WelcomeView) RenderSplash(buf *Buffer) {
 	row++
 
 	// Bottom border
-	buf.SetRow(row, padTo(hPad-2) + wv.Theme.DimText(BoxV) + padTo(borderWidth) + wv.Theme.DimText(BoxV))
+	buf.SetRow(row, padTo(hPad-2)+wv.Theme.DimText(BoxV)+padTo(borderWidth)+wv.Theme.DimText(BoxV))
 	row++
-	buf.SetRow(row, padTo(hPad-2) + wv.Theme.DimText(BoxBL + Repeat(BoxH, borderWidth) + BoxBR))
+	buf.SetRow(row, padTo(hPad-2)+wv.Theme.DimText(BoxBL+Repeat(BoxH, borderWidth)+BoxBR))
 	row++
 
 	// Bottom padding
@@ -257,18 +257,18 @@ func (wv *WelcomeView) RenderCompactGreeting(buf *Buffer, sessionID string, msgC
 	}
 
 	// Raven mark
-	buf.SetRow(row, padTo(wv.Width/2-1) + wv.Theme.AccentText("◤"))
+	buf.SetRow(row, padTo(wv.Width/2-1)+wv.Theme.AccentText("◤"))
 	row += 2
 
 	// Session info
 	info := fmt.Sprintf("Session %s  ·  %d messages  ·  %s tokens",
 		sessionID[:min(4, len(sessionID))], msgCount, TokenFormat(totalTokens))
-	buf.SetRow(row, padTo((wv.Width-len(info))/2) + wv.Theme.DimText(info))
+	buf.SetRow(row, padTo((wv.Width-len(info))/2)+wv.Theme.DimText(info))
 	row++
 
 	if filesEdited > 0 || cost > 0 {
 		sub := fmt.Sprintf("%d files edited  ·  %s", filesEdited, CostFormat(cost))
-		buf.SetRow(row, padTo((wv.Width-len(sub))/2) + wv.Theme.DimText(sub))
+		buf.SetRow(row, padTo((wv.Width-len(sub))/2)+wv.Theme.DimText(sub))
 		row++
 	}
 
@@ -276,11 +276,11 @@ func (wv *WelcomeView) RenderCompactGreeting(buf *Buffer, sessionID string, msgC
 
 	// Actions
 	divider := Repeat("─", wv.Width/3)
-	buf.SetRow(row, padTo((wv.Width-len(divider))/2) + wv.Theme.DimText(divider))
+	buf.SetRow(row, padTo((wv.Width-len(divider))/2)+wv.Theme.DimText(divider))
 	row += 2
 
 	newConv := "New conversation                        /sessions"
-	buf.SetRow(row, padTo((wv.Width-len(newConv))/2) + newConv)
+	buf.SetRow(row, padTo((wv.Width-len(newConv))/2)+newConv)
 }
 
 // ─── Post-Setup Ready Screen ────────────────────────────────────────────
@@ -295,7 +295,7 @@ func (wv *WelcomeView) RenderReady(buf *Buffer, model, contextWindow, mode, nest
 
 	// Top border
 	border := wv.Theme.DimText(BoxTL + Repeat(BoxH, wv.Width-4) + BoxTR)
-	buf.SetRow(row, padTo(2) + border)
+	buf.SetRow(row, padTo(2)+border)
 	row++
 
 	rows := []string{"", ""}
@@ -312,7 +312,7 @@ func (wv *WelcomeView) RenderReady(buf *Buffer, model, contextWindow, mode, nest
 	}
 
 	// Bottom border
-	buf.SetRow(row, padTo(2) + wv.Theme.DimText(BoxBL + Repeat(BoxH, wv.Width-4) + BoxBR))
+	buf.SetRow(row, padTo(2)+wv.Theme.DimText(BoxBL+Repeat(BoxH, wv.Width-4)+BoxBR))
 }
 
 // ─── Animated Splash ────────────────────────────────────────────────────

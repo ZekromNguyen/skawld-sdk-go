@@ -280,7 +280,7 @@ func (cv *ChatView) AppendAssistant(ev core.Event) {
 		if block.Type == core.BlockToolUse {
 			var sb strings.Builder
 			icon := ToolIcon(block.Name)
-			sb.WriteString(cv.Theme.Bold("  " + icon + " [") + cv.Theme.MutedText(block.Name) + cv.Theme.Bold("]"))
+			sb.WriteString(cv.Theme.Bold("  "+icon+" [") + cv.Theme.MutedText(block.Name) + cv.Theme.Bold("]"))
 			if desc := summarizeInput(block.Name, block.Input); desc != "" {
 				sb.WriteString(" " + cv.Theme.DimText(desc))
 			}

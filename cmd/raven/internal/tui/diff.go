@@ -7,7 +7,7 @@ import (
 
 // DiffLine represents one line of a unified diff.
 type DiffLine struct {
-	Kind    rune   // '+', '-', ' ', '@'
+	Kind    rune // '+', '-', ' ', '@'
 	Content string
 	OldNum  int // 1-indexed, 0 if header
 	NewNum  int

@@ -126,16 +126,16 @@ func RGBBg(r, g, b uint8) string {
 
 // Box characters — using Unicode box drawing.
 const (
-	BoxH    = "─"
-	BoxV    = "│"
-	BoxTL   = "╭"
-	BoxTR   = "╮"
-	BoxBL   = "╰"
-	BoxBR   = "╯"
-	BoxCross = "┼"
-	BoxTDown = "┬"
-	BoxTUp   = "┴"
-	BoxTLeft = "┤"
+	BoxH      = "─"
+	BoxV      = "│"
+	BoxTL     = "╭"
+	BoxTR     = "╮"
+	BoxBL     = "╰"
+	BoxBR     = "╯"
+	BoxCross  = "┼"
+	BoxTDown  = "┬"
+	BoxTUp    = "┴"
+	BoxTLeft  = "┤"
 	BoxTRight = "├"
 )
 

@@ -24,10 +24,12 @@ import (
 // block suitable for vision-capable models. Supports PNG, JPEG, GIF, WebP.
 type VisionAnalyzeTool struct{}
 
-func (t VisionAnalyzeTool) Name() string        { return "VisionAnalyze" }
-func (t VisionAnalyzeTool) Description() string { return "Read and analyze an image file. Provide an optional prompt to guide analysis." }
-func (t VisionAnalyzeTool) Scope() core.ToolScope  { return core.ToolScopeRead }
-func (t VisionAnalyzeTool) ParallelSafe() bool     { return true }
+func (t VisionAnalyzeTool) Name() string { return "VisionAnalyze" }
+func (t VisionAnalyzeTool) Description() string {
+	return "Read and analyze an image file. Provide an optional prompt to guide analysis."
+}
+func (t VisionAnalyzeTool) Scope() core.ToolScope { return core.ToolScopeRead }
+func (t VisionAnalyzeTool) ParallelSafe() bool    { return true }
 
 func (t VisionAnalyzeTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -128,10 +130,12 @@ type ImageGenerateTool struct {
 	httpClient *http.Client
 }
 
-func (t ImageGenerateTool) Name() string        { return "ImageGenerate" }
-func (t ImageGenerateTool) Description() string { return "Generate an image from a text prompt using DALL·E." }
-func (t ImageGenerateTool) Scope() core.ToolScope  { return core.ToolScopeWrite }
-func (t ImageGenerateTool) ParallelSafe() bool     { return true }
+func (t ImageGenerateTool) Name() string { return "ImageGenerate" }
+func (t ImageGenerateTool) Description() string {
+	return "Generate an image from a text prompt using DALL·E."
+}
+func (t ImageGenerateTool) Scope() core.ToolScope { return core.ToolScopeWrite }
+func (t ImageGenerateTool) ParallelSafe() bool    { return true }
 
 func (t ImageGenerateTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -173,10 +177,10 @@ func (t ImageGenerateTool) Execute(validated map[string]interface{}, ctx core.To
 	}
 
 	body := map[string]interface{}{
-		"model":  "dall-e-3",
-		"prompt": in.Prompt,
-		"n":      in.N,
-		"size":   in.Size,
+		"model":           "dall-e-3",
+		"prompt":          in.Prompt,
+		"n":               in.N,
+		"size":            in.Size,
 		"response_format": "b64_json",
 	}
 	bodyBytes, err := json.Marshal(body)
@@ -255,10 +259,12 @@ type TextToSpeechTool struct {
 	httpClient *http.Client
 }
 
-func (t TextToSpeechTool) Name() string        { return "TextToSpeech" }
-func (t TextToSpeechTool) Description() string { return "Convert text to speech using OpenAI TTS and save the audio file." }
-func (t TextToSpeechTool) Scope() core.ToolScope  { return core.ToolScopeWrite }
-func (t TextToSpeechTool) ParallelSafe() bool     { return true }
+func (t TextToSpeechTool) Name() string { return "TextToSpeech" }
+func (t TextToSpeechTool) Description() string {
+	return "Convert text to speech using OpenAI TTS and save the audio file."
+}
+func (t TextToSpeechTool) Scope() core.ToolScope { return core.ToolScopeWrite }
+func (t TextToSpeechTool) ParallelSafe() bool    { return true }
 
 func (t TextToSpeechTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{

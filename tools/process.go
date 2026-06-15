@@ -37,7 +37,7 @@ var processRegistry = struct {
 // ProcessTool manages background processes: list, poll, log, kill.
 type ProcessTool struct{}
 
-func (ProcessTool) Name() string        { return "Process" }
+func (ProcessTool) Name() string { return "Process" }
 func (ProcessTool) Description() string {
 	return "Manage background processes. Actions: list (show all processes), poll (check status of one), logs (get output of one), kill (terminate one)."
 }
@@ -66,8 +66,8 @@ func (ProcessTool) InputSchema() map[string]interface{} {
 		"required": []string{"action"},
 	}
 }
-func (ProcessTool) Scope() core.ToolScope       { return core.ToolScopeExec }
-func (ProcessTool) ParallelSafe() bool          { return true }
+func (ProcessTool) Scope() core.ToolScope { return core.ToolScopeExec }
+func (ProcessTool) ParallelSafe() bool    { return true }
 
 func (t ProcessTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	action, _ := asString(raw["action"])

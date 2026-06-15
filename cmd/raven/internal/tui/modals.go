@@ -350,7 +350,7 @@ func (sp *SettingsPage) selectedField(sections []SettingsSection, globalIdx int)
 	for i, sec := range sections {
 		for j := range sec.Fields {
 			if count == globalIdx {
-			return i, j
+				return i, j
 			}
 			count++
 		}
@@ -916,16 +916,16 @@ func (av *AgentView) RenderAgent(buf *Buffer, goal string, steps []AgentStep, ac
 			var stateIcon string
 			var colorFn func(string) string
 			switch step.State {
-		case 'd':
+			case 'd':
 				stateIcon = "✓"
 				colorFn = av.Theme.SuccessText
-		case 'a':
+			case 'a':
 				stateIcon = "◉"
 				colorFn = av.Theme.AccentText
-		case 'e':
+			case 'e':
 				stateIcon = "✗"
 				colorFn = av.Theme.ErrorText
-		case 's':
+			case 's':
 				stateIcon = "⊘"
 				colorFn = av.Theme.MutedText
 			default:
@@ -976,15 +976,15 @@ func (av *AgentView) RenderAgent(buf *Buffer, goal string, steps []AgentStep, ac
 		active := 0
 		for _, s := range steps {
 			switch s.State {
-		case 'd':
+			case 'd':
 				indicators += av.Theme.SuccessText("✓")
 				done++
-		case 'a':
+			case 'a':
 				indicators += av.Theme.AccentText("◉")
 				active = s.Number
-		case 'e':
+			case 'e':
 				indicators += av.Theme.ErrorText("✗")
-		case 's':
+			case 's':
 				indicators += av.Theme.MutedText("⊘")
 			default:
 				indicators += av.Theme.DimText("○")

@@ -90,6 +90,9 @@ Review only.
 	if err := reg.Register(probeTool{calls: &calls}); err != nil {
 		t.Fatal(err)
 	}
+	if err := reg.Register(tools.SubagentTool{}); err != nil {
+		t.Fatal(err)
+	}
 	provider := &subagentProvider{}
 	agent, err := NewAgent(AgentOptions{
 		Provider:     provider,

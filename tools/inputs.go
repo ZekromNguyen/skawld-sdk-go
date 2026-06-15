@@ -471,6 +471,429 @@ func (in taskUpdateInput) patch() core.TaskPatch {
 	return patch
 }
 
+type memoryReadInput struct {
+	Name string
+}
+
+func parseMemoryReadInput(raw map[string]interface{}, toolName string) (memoryReadInput, error) {
+	name, ok := asString(raw["name"])
+	if !ok || strings.TrimSpace(name) == "" {
+		return memoryReadInput{}, core.NewToolExecutionError(toolName, "name must be a non-empty string")
+	}
+	return memoryReadInput{Name: strings.TrimSpace(name)}, nil
+}
+
+func memoryReadInputFrom(input map[string]interface{}) memoryReadInput {
+	parsed, _ := parseMemoryReadInput(input, "MemoryRead")
+	return parsed
+}
+
+func (in memoryReadInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"name": in.Name}
+}
+
+type memoryWriteInput struct {
+	Name        string
+	Description string
+	Content     string
+	Metadata    map[string]interface{}
+}
+
+func parseMemoryWriteInput(raw map[string]interface{}) (memoryWriteInput, error) {
+	name, ok := asString(raw["name"])
+	if !ok || strings.TrimSpace(name) == "" {
+		return memoryWriteInput{}, core.NewToolExecutionError("MemoryWrite", "name must be a non-empty string")
+	}
+	content, ok := asString(raw["content"])
+	if !ok {
+		content, ok = asString(raw["body"])
+	}
+	if !ok {
+		return memoryWriteInput{}, core.NewToolExecutionError("MemoryWrite", "content must be a string")
+	}
+	out := memoryWriteInput{Name: strings.TrimSpace(name), Content: content}
+	if desc, ok := asString(raw["description"]); ok {
+		out.Description = desc
+	}
+	if metadata, exists := raw["metadata"]; exists {
+		m, ok := metadata.(map[string]interface{})
+		if !ok {
+			return memoryWriteInput{}, core.NewToolExecutionError("MemoryWrite", "metadata must be an object")
+		}
+		out.Metadata = m
+	}
+	return out, nil
+}
+
+func memoryWriteInputFrom(input map[string]interface{}) memoryWriteInput {
+	parsed, _ := parseMemoryWriteInput(input)
+	return parsed
+}
+
+func (in memoryWriteInput) mapValue() map[string]interface{} {
+	out := map[string]interface{}{"name": in.Name, "content": in.Content}
+	if in.Description != "" {
+		out["description"] = in.Description
+	}
+	if in.Metadata != nil {
+		out["metadata"] = in.Metadata
+	}
+	return out
+}
+
+type memorySearchInput struct {
+	Query string
+	Limit int
+}
+
+func parseMemorySearchInput(raw map[string]interface{}, toolName string) (memorySearchInput, error) {
+	query, ok := asString(raw["query"])
+	if !ok || strings.TrimSpace(query) == "" {
+		return memorySearchInput{}, core.NewToolExecutionError(toolName, "query must be a non-empty string")
+	}
+	limit := asInt(raw["limit"], 10)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	return memorySearchInput{Query: strings.TrimSpace(query), Limit: limit}, nil
+}
+
+func memorySearchInputFrom(input map[string]interface{}) memorySearchInput {
+	parsed, _ := parseMemorySearchInput(input, "MemorySearch")
+	return parsed
+}
+
+func (in memorySearchInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"query": in.Query, "limit": in.Limit}
+}
+
+type sessionSearchInput struct {
+	Query       string
+	Limit       int
+	MaxSessions int
+}
+
+func parseSessionSearchInput(raw map[string]interface{}) (sessionSearchInput, error) {
+	query, ok := asString(raw["query"])
+	if !ok || strings.TrimSpace(query) == "" {
+		return sessionSearchInput{}, core.NewToolExecutionError("SessionSearch", "query must be a non-empty string")
+	}
+	limit := asInt(raw["limit"], 20)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	maxSessions := asInt(raw["max_sessions"], 100)
+	if maxSessions < 1 {
+		maxSessions = 1
+	}
+	if maxSessions > 1000 {
+		maxSessions = 1000
+	}
+	return sessionSearchInput{Query: strings.TrimSpace(query), Limit: limit, MaxSessions: maxSessions}, nil
+}
+
+func sessionSearchInputFrom(input map[string]interface{}) sessionSearchInput {
+	parsed, _ := parseSessionSearchInput(input)
+	return parsed
+}
+
+func (in sessionSearchInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"query": in.Query, "limit": in.Limit, "max_sessions": in.MaxSessions}
+}
+
+type subagentInput struct {
+	Agent string
+	Task  string
+}
+
+func parseSubagentInput(raw map[string]interface{}) (subagentInput, error) {
+	task, ok := asString(raw["task"])
+	if !ok || strings.TrimSpace(task) == "" {
+		return subagentInput{}, core.NewToolExecutionError("Subagent", "task is required")
+	}
+	agent, _ := asString(raw["agent"])
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		agent = "default"
+	}
+	return subagentInput{Agent: agent, Task: strings.TrimSpace(task)}, nil
+}
+
+func subagentInputFrom(input map[string]interface{}) subagentInput {
+	parsed, _ := parseSubagentInput(input)
+	return parsed
+}
+
+func (in subagentInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"agent": in.Agent, "task": in.Task}
+}
+
+type browserNavigateInput struct {
+	URL       string
+	TimeoutMS int
+}
+
+func parseBrowserNavigateInput(raw map[string]interface{}) (browserNavigateInput, error) {
+	u, ok := asString(raw["url"])
+	if !ok || strings.TrimSpace(u) == "" {
+		return browserNavigateInput{}, core.NewToolExecutionError("BrowserNavigate", "url must be a non-empty string")
+	}
+	timeout := asInt(raw["timeout_ms"], 30000)
+	if timeout < 1000 {
+		timeout = 1000
+	}
+	if timeout > 120000 {
+		timeout = 120000
+	}
+	return browserNavigateInput{URL: strings.TrimSpace(u), TimeoutMS: timeout}, nil
+}
+
+func browserNavigateInputFrom(input map[string]interface{}) browserNavigateInput {
+	parsed, _ := parseBrowserNavigateInput(input)
+	return parsed
+}
+
+func (in browserNavigateInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"url": in.URL, "timeout_ms": in.TimeoutMS}
+}
+
+type browserSnapshotInput struct {
+	Depth int
+}
+
+func parseBrowserSnapshotInput(raw map[string]interface{}) (browserSnapshotInput, error) {
+	depth := asInt(raw["depth"], 6)
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 20 {
+		depth = 20
+	}
+	return browserSnapshotInput{Depth: depth}, nil
+}
+
+func browserSnapshotInputFrom(input map[string]interface{}) browserSnapshotInput {
+	parsed, _ := parseBrowserSnapshotInput(input)
+	return parsed
+}
+
+func (in browserSnapshotInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"depth": in.Depth}
+}
+
+type browserVisionInput struct {
+	FullPage bool
+	Quality  int
+}
+
+func parseBrowserVisionInput(raw map[string]interface{}) (browserVisionInput, error) {
+	quality := asInt(raw["quality"], 90)
+	if quality < 1 {
+		quality = 1
+	}
+	if quality > 100 {
+		quality = 100
+	}
+	return browserVisionInput{FullPage: asBool(raw["full_page"]), Quality: quality}, nil
+}
+
+func browserVisionInputFrom(input map[string]interface{}) browserVisionInput {
+	parsed, _ := parseBrowserVisionInput(input)
+	return parsed
+}
+
+func (in browserVisionInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"full_page": in.FullPage, "quality": in.Quality}
+}
+
+type cronCreateInput struct {
+	Expression string
+	Prompt     string
+}
+
+func parseCronCreateInput(raw map[string]interface{}) (cronCreateInput, error) {
+	expr, ok := asString(raw["cron"])
+	if !ok || strings.TrimSpace(expr) == "" {
+		return cronCreateInput{}, core.NewToolExecutionError("CronCreate", "cron must be a non-empty 5-field expression")
+	}
+	expr = strings.TrimSpace(expr)
+	prompt, ok := asString(raw["prompt"])
+	if !ok || strings.TrimSpace(prompt) == "" {
+		return cronCreateInput{}, core.NewToolExecutionError("CronCreate", "prompt must be a non-empty string")
+	}
+	return cronCreateInput{Expression: expr, Prompt: strings.TrimSpace(prompt)}, nil
+}
+
+func cronCreateInputFrom(input map[string]interface{}) cronCreateInput {
+	parsed, _ := parseCronCreateInput(input)
+	return parsed
+}
+
+func (in cronCreateInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"cron": in.Expression, "prompt": in.Prompt}
+}
+
+type cronDeleteInput struct {
+	ID string
+}
+
+func parseCronDeleteInput(raw map[string]interface{}) (cronDeleteInput, error) {
+	id, ok := asString(raw["id"])
+	if !ok || strings.TrimSpace(id) == "" {
+		return cronDeleteInput{}, core.NewToolExecutionError("CronDelete", "id must be a non-empty string")
+	}
+	return cronDeleteInput{ID: strings.TrimSpace(id)}, nil
+}
+
+func cronDeleteInputFrom(input map[string]interface{}) cronDeleteInput {
+	parsed, _ := parseCronDeleteInput(input)
+	return parsed
+}
+
+func (in cronDeleteInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"id": in.ID}
+}
+
+type xsearchInput struct {
+	Query string
+	Limit int
+}
+
+func parseXSearchInput(raw map[string]interface{}, toolName string) (xsearchInput, error) {
+	query, ok := asString(raw["query"])
+	if !ok || strings.TrimSpace(query) == "" {
+		return xsearchInput{}, core.NewToolExecutionError(toolName, "query must be a non-empty string")
+	}
+	limit := asInt(raw["limit"], 10)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	return xsearchInput{Query: strings.TrimSpace(query), Limit: limit}, nil
+}
+
+func xsearchInputFrom(input map[string]interface{}) xsearchInput {
+	parsed, _ := parseXSearchInput(input, "XSearch")
+	return parsed
+}
+
+func (in xsearchInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"query": in.Query, "limit": in.Limit}
+}
+
+type visionAnalyzeInput struct {
+	ImagePath string
+	Prompt    string
+}
+
+func parseVisionAnalyzeInput(raw map[string]interface{}) (visionAnalyzeInput, error) {
+	path, ok := asString(raw["image_path"])
+	if !ok || strings.TrimSpace(path) == "" {
+		return visionAnalyzeInput{}, core.NewToolExecutionError("VisionAnalyze", "image_path must be a non-empty string")
+	}
+	prompt, _ := asString(raw["prompt"])
+	return visionAnalyzeInput{ImagePath: strings.TrimSpace(path), Prompt: strings.TrimSpace(prompt)}, nil
+}
+
+func visionAnalyzeInputFrom(input map[string]interface{}) visionAnalyzeInput {
+	parsed, _ := parseVisionAnalyzeInput(input)
+	return parsed
+}
+
+func (in visionAnalyzeInput) mapValue() map[string]interface{} {
+	out := map[string]interface{}{"image_path": in.ImagePath}
+	if in.Prompt != "" {
+		out["prompt"] = in.Prompt
+	}
+	return out
+}
+
+type imageGenerateInput struct {
+	Prompt string
+	Size   string
+	N      int
+}
+
+func parseImageGenerateInput(raw map[string]interface{}) (imageGenerateInput, error) {
+	prompt, ok := asString(raw["prompt"])
+	if !ok || strings.TrimSpace(prompt) == "" {
+		return imageGenerateInput{}, core.NewToolExecutionError("ImageGenerate", "prompt must be a non-empty string")
+	}
+	size, _ := asString(raw["size"])
+	if size == "" {
+		size = "1024x1024"
+	}
+	n := asInt(raw["n"], 1)
+	if n < 1 {
+		n = 1
+	}
+	if n > 4 {
+		n = 4
+	}
+	return imageGenerateInput{Prompt: strings.TrimSpace(prompt), Size: size, N: n}, nil
+}
+
+func imageGenerateInputFrom(input map[string]interface{}) imageGenerateInput {
+	parsed, _ := parseImageGenerateInput(input)
+	return parsed
+}
+
+func (in imageGenerateInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"prompt": in.Prompt, "size": in.Size, "n": in.N}
+}
+
+type ttsInput struct {
+	Text  string
+	Voice string
+	Speed float64
+}
+
+func parseTTSInput(raw map[string]interface{}) (ttsInput, error) {
+	text, ok := asString(raw["text"])
+	if !ok || strings.TrimSpace(text) == "" {
+		return ttsInput{}, core.NewToolExecutionError("TextToSpeech", "text must be a non-empty string")
+	}
+	voice, _ := asString(raw["voice"])
+	if voice == "" {
+		voice = "alloy"
+	}
+	speed := 1.0
+	if v, exists := raw["speed"]; exists {
+		switch n := v.(type) {
+		case float64:
+			speed = n
+		case int:
+			speed = float64(n)
+		case float32:
+			speed = float64(n)
+		}
+	}
+	if speed < 0.25 {
+		speed = 0.25
+	}
+	if speed > 4.0 {
+		speed = 4.0
+	}
+	return ttsInput{Text: strings.TrimSpace(text), Voice: voice, Speed: speed}, nil
+}
+
+func ttsInputFrom(input map[string]interface{}) ttsInput {
+	parsed, _ := parseTTSInput(input)
+	return parsed
+}
+
+func (in ttsInput) mapValue() map[string]interface{} {
+	return map[string]interface{}{"text": in.Text, "voice": in.Voice, "speed": in.Speed}
+}
+
 func coerceNonNegativeInt(raw map[string]interface{}, key string) (int, bool) {
 	if val, ok := raw[key]; ok {
 		switch n := val.(type) {

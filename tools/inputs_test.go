@@ -86,3 +86,78 @@ func TestTypedTaskUpdateInputBuildsPatch(t *testing.T) {
 		t.Fatalf("expected metadata in normalized map: %+v", in.mapValue())
 	}
 }
+
+func TestTypedMemoryAndSubagentInputParsers(t *testing.T) {
+	mem, err := parseMemoryWriteInput(map[string]interface{}{
+		"name":        " project ",
+		"description": "facts",
+		"content":     "body",
+		"metadata":    map[string]interface{}{"category": "project"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mem.Name != "project" || mem.Content != "body" || mem.Metadata["category"] != "project" {
+		t.Fatalf("unexpected memory input: %+v", mem)
+	}
+	search, err := parseMemorySearchInput(map[string]interface{}{"query": " alpha ", "limit": float64(999)}, "MemorySearch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if search.Query != "alpha" || search.Limit != 50 {
+		t.Fatalf("unexpected memory search input: %+v", search)
+	}
+	session, err := parseSessionSearchInput(map[string]interface{}{"query": " beta ", "limit": 0, "max_sessions": 9999})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Query != "beta" || session.Limit != 1 || session.MaxSessions != 1000 {
+		t.Fatalf("unexpected session search input: %+v", session)
+	}
+	subagent, err := parseSubagentInput(map[string]interface{}{"task": " inspect "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subagent.Agent != "default" || subagent.Task != "inspect" {
+		t.Fatalf("unexpected subagent input: %+v", subagent)
+	}
+	nav, err := parseBrowserNavigateInput(map[string]interface{}{"url": " https://example.com ", "timeout_ms": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nav.URL != "https://example.com" || nav.TimeoutMS != 1000 {
+		t.Fatalf("unexpected browser navigate input: %+v", nav)
+	}
+	snapshot, err := parseBrowserSnapshotInput(map[string]interface{}{"depth": 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Depth != 20 {
+		t.Fatalf("unexpected browser snapshot input: %+v", snapshot)
+	}
+	vision, err := parseBrowserVisionInput(map[string]interface{}{"full_page": true, "quality": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !vision.FullPage || vision.Quality != 1 {
+		t.Fatalf("unexpected browser vision input: %+v", vision)
+	}
+}
+
+func TestTypedMemoryInputParsersRejectInvalidValues(t *testing.T) {
+	if _, err := parseMemoryWriteInput(map[string]interface{}{"name": "x", "metadata": []string{"bad"}, "content": "body"}); err == nil {
+		t.Fatal("expected invalid metadata to fail")
+	}
+	if _, err := parseMemorySearchInput(map[string]interface{}{"query": " "}, "MemorySearch"); err == nil {
+		t.Fatal("expected blank memory search query to fail")
+	}
+	if _, err := parseSessionSearchInput(map[string]interface{}{"query": " "}); err == nil {
+		t.Fatal("expected blank session search query to fail")
+	}
+	if _, err := parseSubagentInput(map[string]interface{}{"task": " "}); err == nil {
+		t.Fatal("expected blank subagent task to fail")
+	}
+	if _, err := parseBrowserNavigateInput(map[string]interface{}{"url": " "}); err == nil {
+		t.Fatal("expected blank browser URL to fail")
+	}
+}

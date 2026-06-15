@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -80,6 +81,10 @@ func (s *Screen) EnterRawMode() error {
 	}
 
 	s.rawMode = true
+
+	// Enable bracketed paste mode so pasted text comes as a single block.
+	fmt.Fprint(s.out, EnterBracketedPaste())
+
 	return nil
 }
 
@@ -88,6 +93,8 @@ func (s *Screen) ExitRawMode() error {
 	if !s.rawMode {
 		return nil
 	}
+	// Disable bracketed paste before restoring console mode.
+	fmt.Fprint(s.out, ExitBracketedPaste())
 	s.rawMode = false
 	return windows.SetConsoleMode(windows.Handle(os.Stdin.Fd()), s.origMode)
 }
@@ -143,8 +150,11 @@ func (s *Screen) HandleSignals() chan os.Signal {
 
 func (s *Screen) pollResize() {
 	// Poll terminal size periodically — Windows doesn't send SIGWINCH.
-	// In practice, the application loop should call UpdateSize() before
-	// each render pass.
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.UpdateSize()
+	}
 }
 
 // UpdateSize refreshes the terminal dimensions.

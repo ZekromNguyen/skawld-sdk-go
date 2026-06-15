@@ -12,10 +12,10 @@ import (
 // Renderer dispatches SDK events to view renderers and manages the screen
 // composition. It owns the terminal buffer and orchestrates re-renders.
 type Renderer struct {
-	Screen  *Screen
-	Buffer  *Buffer
-	Theme   Theme
-	Views   *Views
+	Screen *Screen
+	Buffer *Buffer
+	Theme  Theme
+	Views  *Views
 
 	mu sync.Mutex
 }
@@ -26,6 +26,7 @@ type Views struct {
 	Status  *StatusView
 	Tools   *ToolsView
 	Welcome *WelcomeView
+	Toast   *ToastManager
 }
 
 // NewRenderer creates a renderer with the screen and initializes all views.
@@ -41,6 +42,7 @@ func NewRenderer(screen *Screen) *Renderer {
 		Status:  NewStatusView(screen.Width, r.Theme),
 		Tools:   NewToolsView(screen.Width, r.Theme),
 		Welcome: NewWelcomeView(screen.Width, screen.Height, r.Theme),
+		Toast:   &ToastManager{Max: 3},
 	}
 	return r
 }
@@ -84,19 +86,35 @@ func (r *Renderer) HandleEvent(ev core.Event) {
 		r.Views.Tools.AppendStart(ev)
 	case ev.Type == core.EventToolCallEnd:
 		r.Views.Tools.AppendEnd(ev)
-		// Render diff inline when edit/write tools complete
 		r.Views.Chat.AppendToolResult(ev, r.Views.Tools)
+		if ev.IsError {
+			r.Views.Toast.AddToast(ToastError, fmt.Sprintf("%s failed", ev.ToolName), 5)
+		} else {
+			r.Views.Toast.AddToast(ToastSuccess, fmt.Sprintf("%s done", ev.ToolName), 3)
+		}
 	case ev.Type == core.EventPermissionRequest:
 		r.Views.Chat.AppendPermission(ev)
 	case ev.Type == core.EventUsage:
 		r.Views.Status.UpdateUsage(ev)
 	case ev.Type == core.EventCompaction:
 		r.Views.Chat.AppendCompaction(ev)
+		r.Views.Toast.AddToast(ToastInfo, fmt.Sprintf("Compacted: %dmsgs -> %dmsgs", ev.MessagesBefore, ev.MessagesAfter), 5)
 	case ev.Type == core.EventResult:
 		r.Views.Chat.AppendResult(ev)
 		r.Views.Status.UpdateResult(ev)
+		switch ev.Subtype {
+		case "success":
+			r.Views.Toast.AddToast(ToastSuccess, "Done", 3)
+		case "error":
+			r.Views.Toast.AddToast(ToastError, "Run failed", 5)
+		case "aborted":
+			r.Views.Toast.AddToast(ToastWarning, "Aborted", 3)
+		}
 	case ev.Type == core.EventError:
 		r.Views.Chat.AppendError(ev)
+		if ev.Error != nil {
+			r.Views.Toast.AddToast(ToastError, ev.Error.Message, 5)
+		}
 	case ev.Type == core.EventSkillsLoaded:
 		r.Views.Chat.AppendSkills(ev)
 	}
@@ -115,6 +133,10 @@ func (r *Renderer) Render() {
 
 	// Render chat/tool content
 	r.Views.Chat.Render(r.Buffer, 0, chatHeight)
+
+	// Tick toast TTLs and render toasts in top-right
+	r.Views.Toast.Tick()
+	r.Views.Toast.RenderToasts(r.Buffer, r.Theme, r.Buffer.Width)
 
 	// Render status bar on the last line
 	statusLine := r.Views.Status.Render()
@@ -162,14 +184,14 @@ type ChatLine struct {
 // ChatView buffers the conversation display. It implements scrolling and
 // manages the visible window of messages.
 type ChatView struct {
-	Lines      []ChatLine
-	Width      int
-	MaxHeight  int
-	Theme      Theme
-	ScrollPos  int // 0 = bottom (latest), positive = scrolled up
-	MaxScroll  int
-	Streaming  bool
-	StreamIdx  int // index of the currently streaming line, -1 if none
+	Lines     []ChatLine
+	Width     int
+	MaxHeight int
+	Theme     Theme
+	ScrollPos int // 0 = bottom (latest), positive = scrolled up
+	MaxScroll int
+	Streaming bool
+	StreamIdx int // index of the currently streaming line, -1 if none
 }
 
 // NewChatView creates a chat view.
@@ -234,7 +256,6 @@ func (cv *ChatView) AppendUser(ev core.Event) {
 
 // AppendAssistant adds a full assistant message.
 func (cv *ChatView) AppendAssistant(ev core.Event) {
-	// If we were streaming, finalize the streaming line
 	if cv.Streaming && cv.StreamIdx >= 0 {
 		cv.Streaming = false
 		cv.StreamIdx = -1
@@ -254,11 +275,12 @@ func (cv *ChatView) AppendAssistant(ev core.Event) {
 		cv.addLine("raven", sb.String())
 	}
 
-	// Tool uses in message
+	// Tool uses in message — show with icons
 	for _, block := range ev.Message.Content {
 		if block.Type == core.BlockToolUse {
 			var sb strings.Builder
-			sb.WriteString(cv.Theme.Bold("  [") + cv.Theme.MutedText(block.Name) + cv.Theme.Bold("]"))
+			icon := ToolIcon(block.Name)
+			sb.WriteString(cv.Theme.Bold("  " + icon + " [") + cv.Theme.MutedText(block.Name) + cv.Theme.Bold("]"))
 			if desc := summarizeInput(block.Name, block.Input); desc != "" {
 				sb.WriteString(" " + cv.Theme.DimText(desc))
 			}
@@ -280,11 +302,11 @@ func (cv *ChatView) AppendDelta(ev core.Event) {
 		var sb strings.Builder
 		sb.WriteString(cv.Theme.Bold("Raven │ "))
 		sb.WriteString(text)
-		sb.WriteString(cv.Theme.AccentText("█")) // pulsing cursor
+		sb.WriteString(cv.Theme.AccentText("█"))
 		cv.Lines = append(cv.Lines, ChatLine{
-			Role: "raven",
+			Role:    "raven",
 			Content: sb.String(),
-			Time: time.Now(),
+			Time:    time.Now(),
 		})
 	} else if cv.StreamIdx >= 0 && cv.StreamIdx < len(cv.Lines) {
 		var sb strings.Builder
@@ -362,15 +384,16 @@ func (cv *ChatView) AppendToolResult(ev core.Event, tv *ToolsView) {
 		return
 	}
 
-	// Status line: tool name, summary, duration
+	// Status line with tool icon
 	var sb strings.Builder
 	icon := "✓"
+	ic := ToolIcon(tr.Name)
 	colorFn := cv.Theme.SuccessText
 	if ev.IsError {
 		icon = "✗"
 		colorFn = cv.Theme.ErrorText
 	}
-	sb.WriteString(colorFn(fmt.Sprintf("  %s [%s]", icon, tr.Name)))
+	sb.WriteString(colorFn(fmt.Sprintf("  %s %s [%s]", icon, ic, tr.Name)))
 	sb.WriteString(" " + cv.Theme.DimText(summarizeInput(tr.Name, tr.Input)))
 	sb.WriteString(" · " + cv.Theme.DimText(DurationFormat(ev.DurationMS)))
 	cv.addLine("tool-result", sb.String())
@@ -402,7 +425,6 @@ func (cv *ChatView) renderToolDiff(tr *ToolRecord) []string {
 		content, _ := tr.Input["content"].(string)
 		filePath, _ := tr.Input["file_path"].(string)
 		if content != "" {
-			// Show the first 10 lines of written content
 			contentLines := strings.Split(content, "\n")
 			if len(contentLines) > 10 {
 				lines = append(lines, cv.Theme.DimText(fmt.Sprintf("  │ %s: wrote %d lines", filePath, len(contentLines))))
@@ -419,7 +441,6 @@ func (cv *ChatView) renderToolDiff(tr *ToolRecord) []string {
 		}
 
 	case "Bash":
-		// Show command output (first 15 lines)
 		output := tr.Output
 		if output != "" {
 			outLines := strings.Split(output, "\n")
@@ -457,7 +478,6 @@ func (cv *ChatView) Render(buf *Buffer, startRow, height int) {
 	cv.Fill(buf, row, startRow+height)
 }
 
-// visibleLines returns the lines visible in the current scroll window.
 func (cv *ChatView) visibleLines(height int) []ChatLine {
 	if len(cv.Lines) <= height {
 		return cv.Lines
@@ -473,7 +493,6 @@ func (cv *ChatView) visibleLines(height int) []ChatLine {
 	return cv.Lines[start:end]
 }
 
-// Fill fills remaining rows.
 func (cv *ChatView) Fill(buf *Buffer, from, to int) {
 	for i := from; i < to; i++ {
 		buf.SetRow(i, "")
@@ -510,9 +529,10 @@ type StatusView struct {
 // NewStatusView creates a status bar view.
 func NewStatusView(w int, t Theme) *StatusView {
 	return &StatusView{
-		Width:  w,
-		Theme:  t,
-		Idle:   true,
+		Width:         w,
+		Theme:         t,
+		Idle:          true,
+		ContextWindow: 200000,
 	}
 }
 
@@ -564,9 +584,26 @@ func (sv *StatusView) Render() string {
 		}
 	} else {
 		parts = append(parts, sv.Theme.AccentText(sv.Model))
-		// Context usage
-		ctxStr := fmt.Sprintf("%s/%s ctx", TokenFormat(sv.InputTokens), TokenFormat(sv.ContextWindow))
-		parts = append(parts, sv.Theme.DimText(ctxStr))
+
+		// Graphical context bar
+		if sv.ContextWindow > 0 {
+			ctxPct := float64(sv.InputTokens) / float64(sv.ContextWindow) * 100
+			bar := ProgressBarRatio(sv.InputTokens, sv.ContextWindow, 20)
+			// Color thresholds
+			var ctxBar string
+			if ctxPct >= 80 {
+				ctxBar = sv.Theme.ErrorText(bar)
+			} else if ctxPct >= 50 {
+				ctxBar = sv.Theme.WarningText(bar)
+			} else {
+				ctxBar = bar
+			}
+			pctStr := fmt.Sprintf("%.0f%%", ctxPct)
+			ctxStr := fmt.Sprintf("ctx [%s] %s · %s/%s", ctxBar, pctStr,
+				TokenFormat(sv.InputTokens), TokenFormat(sv.ContextWindow))
+			parts = append(parts, sv.Theme.DimText(ctxStr))
+		}
+
 		// Cost
 		parts = append(parts, sv.Theme.DimText(CostFormat(sv.Cost)))
 		// Mode
@@ -599,10 +636,9 @@ func (sv *StatusView) Render() string {
 	// Compose with spacing
 	left := strings.Join(parts, " │ ")
 
-	// Total width calculation
 	leftWidth := len(stripANSI(left))
 	rightWidth := len(stripANSI(helpHint))
-	spacer := sv.Width - leftWidth - rightWidth - 4 // 4 for border
+	spacer := sv.Width - leftWidth - rightWidth - 4
 	if spacer < 1 {
 		spacer = 1
 	}
@@ -664,7 +700,6 @@ func (tv *ToolsView) AppendEnd(ev core.Event) {
 			tr.Duration = ev.DurationMS
 			tr.IsError = ev.IsError
 			tr.Completed = true
-			// Capture output from delta if available
 			if output, ok := ev.Delta["output"].(string); ok {
 				tr.Output = output
 			} else if content, ok := ev.Delta["content"].(string); ok {
@@ -672,7 +707,6 @@ func (tv *ToolsView) AppendEnd(ev core.Event) {
 			}
 		}
 	}
-	// Move completed tools to history
 	var stillActive []*ToolRecord
 	for _, tr := range tv.Active {
 		if tr.Completed {
@@ -709,7 +743,8 @@ func (tv *ToolsView) RenderActive(buf *Buffer) {
 
 func (tv *ToolsView) renderToolLine(tr *ToolRecord) string {
 	var sb strings.Builder
-	sb.WriteString(tv.Theme.Bold(fmt.Sprintf("  [%s]", tr.Name)))
+	icon := ToolIcon(tr.Name)
+	sb.WriteString(tv.Theme.Bold(fmt.Sprintf("  %s [%s]", icon, tr.Name)))
 	sb.WriteString(" ")
 	sb.WriteString(tv.Theme.DimText(summarizeInput(tr.Name, tr.Input)))
 	if tr.Duration > 0 {
@@ -778,10 +813,9 @@ func summarizeInput(name string, input map[string]interface{}) string {
 	return ""
 }
 
-// estimateCost computes a rough cost estimate.
 func estimateCost(model string, usage core.Usage) float64 {
-	inputCost := float64(usage.InputTokens) * 0.000003  // ~$3/MTok
-	outputCost := float64(usage.OutputTokens) * 0.000015 // ~$15/MTok
+	inputCost := float64(usage.InputTokens) * 0.000003
+	outputCost := float64(usage.OutputTokens) * 0.000015
 	return inputCost + outputCost
 }
 

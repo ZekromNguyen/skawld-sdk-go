@@ -217,12 +217,6 @@ func (a *Agent) loadSubagents() error {
 		a.subMu.Unlock()
 		return err
 	}
-	if _, exists := a.opts.Tools.Get("Subagent"); !exists {
-		if err := a.opts.Tools.Register(subagents.Tool{Registry: a.subagents}); err != nil {
-			a.subMu.Unlock()
-			return err
-		}
-	}
 	a.subMu.Unlock()
 	a.rebuildSystem()
 	return nil
@@ -248,6 +242,10 @@ func (a *Agent) Options() AgentOptions {
 	opts.Tools = a.opts.Tools.Clone()
 	return opts
 }
+
+// Store returns the underlying session store so callers can list, delete, and
+// query sessions.
+func (a *Agent) Store() core.SessionStore { return a.store }
 
 func (a *Agent) connectMCP(ctx context.Context) error {
 	if a.mcp == nil {

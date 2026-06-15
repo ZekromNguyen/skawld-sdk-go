@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -43,6 +45,53 @@ const (
 	modeInput      = iota // normal text input
 	modePalette           // command palette overlay
 	modePermission        // waiting for permission decision
+	modeModal             // interactive modal overlay
+)
+
+// ModalType identifies which interactive modal is active.
+type ModalType int
+
+const (
+	modalNone ModalType = iota
+	modalModelPicker
+	modalSessionBrowser
+	modalSettings
+	modalMemoryBrowser
+	modalExport
+	modalCost
+	modalTheme
+	modalCompact
+)
+
+// modalState holds the transient state of an interactive modal.
+type modalState struct {
+	typ              ModalType
+	selected         int
+	selectedSection  int
+	selectedField    int
+	query            string
+	exportFormat     string
+	exporting        bool
+	exportProgress   int
+	exportPath       string
+	compactConfirmed bool
+	themeList        []tui.AvailableTheme
+	currentTheme     string
+	modelEntries     []tui.ModelInfo
+	currentModel     string
+	sessions         []tui.SessionInfo
+	memories         []tui.MemoryEntry
+	settingsSections []tui.SettingsSection
+	costData         tui.CostData
+}
+
+// modalAction is returned by handleModalKey to signal what to do next.
+type modalAction int
+
+const (
+	modalActionContinue modalAction = iota // modal still active
+	modalActionDismiss                     // dismiss modal, return to input
+	modalActionExecute                     // execute the modal's action
 )
 
 func main() {
@@ -146,6 +195,9 @@ func main() {
 	var pendingPermission *tui.PermissionRequest
 	var permDialog tui.PermissionDialog
 
+	// Modal state
+	var ms modalState
+
 loop:
 	for {
 		select {
@@ -153,6 +205,15 @@ loop:
 			if sig == os.Interrupt {
 				break loop
 			}
+		default:
+		}
+
+		// Handle terminal resize events (non-blocking).
+		select {
+		case <-screen.Resize:
+			renderer.Resize()
+			renderer.Render()
+			renderer.PrintStatusBar()
 		default:
 		}
 
@@ -189,14 +250,22 @@ loop:
 
 			// Handle slash commands
 			if strings.HasPrefix(input, "/") {
-				handleCommand(input, screen, renderer, agent, session)
+				modalType, openModal := handleCommand(input, screen, renderer, agent, session)
+				if openModal {
+					initModal(modalType, &ms, renderer, agent, session, screen)
+					renderModal(modalType, &ms, renderer, screen)
+					replMode = modeModal
+					continue
+				}
 				renderer.PrintStatusBar()
 				continue
 			}
 
 			// Handle shell escape
 			if strings.HasPrefix(input, "!") {
-				handleShellEscape(input[1:])
+				handleShellEscape(screen, strings.TrimSpace(input[1:]))
+				renderer.Render()
+				renderer.PrintStatusBar()
 				continue
 			}
 
@@ -228,7 +297,12 @@ loop:
 					replMode = modeInput
 					renderer.Render()
 					renderer.PrintStatusBar()
-					executePaletteAction(action, screen, renderer, agent, session)
+					modalType, openModal := executePaletteAction(action, screen, renderer, agent, session)
+					if openModal {
+						initModal(modalType, &ms, renderer, agent, session, screen)
+						renderModal(modalType, &ms, renderer, screen)
+						replMode = modeModal
+					}
 				}
 
 			case key.KeyCode == tui.KeyUp:
@@ -277,6 +351,26 @@ loop:
 				}
 				pendingPermission = nil
 			}
+
+		case modeModal:
+			key, err := inputReader.ReadKey()
+			if err != nil {
+				replMode = modeInput
+				continue
+			}
+			action := handleModalKey(key, &ms, renderer, agent, session, screen)
+			switch action {
+			case modalActionDismiss:
+				replMode = modeInput
+				renderer.Render()
+				renderer.PrintStatusBar()
+			case modalActionExecute:
+				replMode = modeInput
+				executeModalAction(ms.typ, &ms, screen, renderer, agent, session)
+				renderer.Render()
+				renderer.PrintStatusBar()
+			case modalActionContinue:
+			}
 		}
 	}
 
@@ -312,7 +406,7 @@ func renderPalette(screen *tui.Screen, cp *tui.CommandPalette, query string, ent
 	buf.FullRender(screen)
 }
 
-func executePaletteAction(action string, screen *tui.Screen, renderer *tui.Renderer, agent *skawld.Agent, session *skawld.Session) {
+func executePaletteAction(action string, screen *tui.Screen, renderer *tui.Renderer, agent *skawld.Agent, session *skawld.Session) (ModalType, bool) {
 	switch action {
 	case "/clear":
 		renderer.ClearAndReset()
@@ -320,15 +414,29 @@ func executePaletteAction(action string, screen *tui.Screen, renderer *tui.Rende
 		showStatus(screen, renderer, session)
 	case "/help":
 		showHelp(screen, renderer)
+	case "/model":
+		return modalModelPicker, true
+	case "/sessions":
+		return modalSessionBrowser, true
+	case "/memory":
+		return modalMemoryBrowser, true
+	case "/settings":
+		return modalSettings, true
+	case "/export md", "/export json":
+		return modalExport, true
+	case "/cost":
+		return modalCost, true
+	case "/compact":
+		return modalCompact, true
 	case "/quit", "/exit":
 		screen.Reset()
 		os.Exit(0)
 	default:
-		// For other actions, type them as input
 		screen.WriteAt(screen.Height-1, 1, tui.ClearToEndOfLine())
 		screen.WriteAt(screen.Height-1, 1, renderer.Theme.DimText(action))
 		time.Sleep(500 * time.Millisecond)
 	}
+	return modalNone, false
 }
 
 func readKeyString(reader *tui.InputReader) string {
@@ -477,10 +585,10 @@ func runPrompt(agent *skawld.Agent, session *skawld.Session, prompt string, scre
 
 // ── Slash Commands ────────────────────────────────────────────────────────
 
-func handleCommand(cmd string, screen *tui.Screen, renderer *tui.Renderer, agent *skawld.Agent, session *skawld.Session) {
+func handleCommand(cmd string, screen *tui.Screen, renderer *tui.Renderer, agent *skawld.Agent, session *skawld.Session) (openModalType ModalType, shouldOpenModal bool) {
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
-		return
+		return modalNone, false
 	}
 
 	switch parts[0] {
@@ -490,11 +598,27 @@ func handleCommand(cmd string, screen *tui.Screen, renderer *tui.Renderer, agent
 		if len(parts) > 1 {
 			renderer.Views.Status.SetModel(parts[1])
 			renderer.PrintStatusBar()
+		} else {
+			return modalModelPicker, true
 		}
 	case "/clear":
 		renderer.ClearAndReset()
 	case "/status":
 		showStatus(screen, renderer, session)
+	case "/sessions":
+		return modalSessionBrowser, true
+	case "/memory":
+		return modalMemoryBrowser, true
+	case "/settings":
+		return modalSettings, true
+	case "/export":
+		return modalExport, true
+	case "/cost":
+		return modalCost, true
+	case "/theme":
+		return modalTheme, true
+	case "/compact":
+		return modalCompact, true
 	case "/quit", "/exit":
 		screen.Reset()
 		os.Exit(0)
@@ -504,10 +628,39 @@ func handleCommand(cmd string, screen *tui.Screen, renderer *tui.Renderer, agent
 		screen.WriteAt(screen.Height-1, 1, renderer.Theme.DimText(msg))
 		time.Sleep(1500 * time.Millisecond)
 	}
+	return modalNone, false
 }
 
-func handleShellEscape(cmd string) {
-	fmt.Fprintf(os.Stderr, "!%s (shell escapes not yet implemented)\n", cmd)
+func handleShellEscape(screen *tui.Screen, command string) {
+	if strings.TrimSpace(command) == "" {
+		return
+	}
+	if screen != nil {
+		screen.ExitAltScreen()
+		_ = screen.ExitRawMode()
+	}
+	fmt.Printf("!%s\n", command)
+	name := "sh"
+	args := []string{"-c", command}
+	if runtime.GOOS == "windows" {
+		name = "cmd.exe"
+		args = []string{"/c", command}
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shell escape failed: %v\n", err)
+	}
+	fmt.Fprint(os.Stdout, "\nPress Enter to return to Raven...")
+	_, _ = fmt.Fscanln(os.Stdin)
+	if screen != nil {
+		_ = screen.EnterRawMode()
+		screen.EnterAltScreen()
+		screen.Clear()
+	}
 }
 
 func showHelp(screen *tui.Screen, renderer *tui.Renderer) {
@@ -515,15 +668,22 @@ func showHelp(screen *tui.Screen, renderer *tui.Renderer) {
 	lines := []string{
 		renderer.Theme.Bold("  Raven Commands:"),
 		"",
-		renderer.Theme.AccentText("  /help") + "       Show this help",
-		renderer.Theme.AccentText("  /model <n>") + "  Switch model",
-		renderer.Theme.AccentText("  /clear") + "      Clear screen",
-		renderer.Theme.AccentText("  /status") + "     Show session status",
-		renderer.Theme.AccentText("  /quit, /exit") + " Exit Raven",
+		renderer.Theme.AccentText("  /help") + "        Show this help",
+		renderer.Theme.AccentText("  /model") + "        Switch model (interactive picker)",
+		renderer.Theme.AccentText("  /sessions") + "     Browse and resume sessions",
+		renderer.Theme.AccentText("  /memory") + "       Browse memories",
+		renderer.Theme.AccentText("  /settings") + "     Open settings",
+		renderer.Theme.AccentText("  /clear") + "        Clear screen",
+		renderer.Theme.AccentText("  /compact") + "      Compact context to free space",
+		renderer.Theme.AccentText("  /export") + "       Export conversation (md/json/txt)",
+		renderer.Theme.AccentText("  /cost") + "         Show cost breakdown",
+		renderer.Theme.AccentText("  /theme") + "        Switch terminal theme",
+		renderer.Theme.AccentText("  /status") + "       Show session status",
+		renderer.Theme.AccentText("  /quit, /exit") + "  Exit Raven",
 		"",
-		renderer.Theme.AccentText("  Ctrl+P") + "      Command palette",
-		renderer.Theme.AccentText("  Ctrl+C") + "      Cancel / interrupt",
-		renderer.Theme.AccentText("  Ctrl+D") + "      Exit Raven",
+		renderer.Theme.AccentText("  Ctrl+P") + "       Command palette",
+		renderer.Theme.AccentText("  Ctrl+C") + "       Cancel / interrupt",
+		renderer.Theme.AccentText("  Ctrl+D") + "       Exit Raven",
 		"",
 		renderer.Theme.DimText("  Enter to continue..."),
 	}

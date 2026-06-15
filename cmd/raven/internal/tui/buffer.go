@@ -204,3 +204,8 @@ func padTo(col int) string {
 	}
 	return fmt.Sprintf("\033[%dC", col)
 }
+
+// PadTo is the exported version of padTo for use outside the tui package.
+func PadTo(col int) string {
+	return padTo(col)
+}

@@ -65,6 +65,17 @@ func ClearLine() string { return "\033[2K" }
 // ClearToEndOfLine clears from cursor to end of line.
 func ClearToEndOfLine() string { return "\033[0K" }
 
+// EnterBracketedPaste enables bracketed paste mode.
+func EnterBracketedPaste() string { return "\033[?2004h" }
+
+// ExitBracketedPaste disables bracketed paste mode.
+func ExitBracketedPaste() string { return "\033[?2004l" }
+
+// SearchPrompt returns the reverse-i-search prompt.
+func SearchPrompt(query string) string {
+	return fmt.Sprintf("\r\033[2K(bck-i-search)`%s': ", query)
+}
+
 // ScrollUp scrolls the screen up n lines.
 func ScrollUp(n int) string { return fmt.Sprintf("\033[%dS", n) }
 
@@ -170,8 +181,7 @@ func BoxDraw(title string, lines []string, width int) string {
 
 // ─── Progress Bar ───────────────────────────────────────────────────────
 
-// ProgressBar renders a 20-char progress bar with percentage label.
-// fill is 0.0–1.0. Uses █ for filled and ░ for empty.
+// ProgressBar renders a progress bar given a fill ratio (0.0–1.0).
 func ProgressBar(fill float64, width int, t Theme) string {
 	if width <= 0 {
 		width = 20
@@ -198,6 +208,30 @@ func ProgressBar(fill float64, width int, t Theme) string {
 	b.WriteString(t.DimText(fmt.Sprintf(" %d%%", int(fill*100))))
 
 	return b.String()
+}
+
+// ProgressBarRatio renders a progress bar from current/total counts into width
+// characters. Returns only the bar (no label); callers add context.
+func ProgressBarRatio(current, total, width int) string {
+	if width <= 0 {
+		width = 20
+	}
+	if total <= 0 {
+		total = 1
+	}
+	if current < 0 {
+		current = 0
+	}
+	if current > total {
+		current = total
+	}
+
+	filled := current * width / total
+	if filled > width {
+		filled = width
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat(" ", width-filled)
+	return bar
 }
 
 // ─── Spinner ────────────────────────────────────────────────────────────

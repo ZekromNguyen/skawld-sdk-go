@@ -1046,8 +1046,8 @@ func TestAgentRuntimeLoadingDoesNotMutateCallerRegistry(t *testing.T) {
 	if _, ok := agent.opts.Tools.Get("Skill"); !ok {
 		t.Fatal("agent registry did not receive Skill tool")
 	}
-	if _, ok := agent.opts.Tools.Get("Subagent"); !ok {
-		t.Fatal("agent registry did not receive Subagent tool")
+	if _, ok := agent.opts.Tools.Get("Subagent"); ok {
+		t.Fatal("agent registry received Subagent through runtime loading")
 	}
 }
 
@@ -1223,8 +1223,10 @@ func TestRuntimeLoadingDoesNotSerializeSkillsAndSubagentsBehindSlowMCP(t *testin
 	}
 	waitFor(t, time.Second, func() bool {
 		_, skill := agent.opts.Tools.Get("Skill")
-		_, subagent := agent.opts.Tools.Get("Subagent")
-		return skill && subagent
+		agent.subMu.Lock()
+		subagentLoaded := agent.subagents != nil && agent.subagents.Loaded()
+		agent.subMu.Unlock()
+		return skill && subagentLoaded
 	})
 	close(release)
 	for range handle.Events() {

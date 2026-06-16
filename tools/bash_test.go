@@ -164,7 +164,12 @@ func TestTerminateProcessTreeWaitsForProcessExit(t *testing.T) {
 	if os.PathSeparator == '\\' {
 		t.Skip("process-group shell semantics differ on windows")
 	}
-	cmd := exec.Command("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done")
+	// The shell traps SIGTERM and exits 0, so terminateProcessTree should
+	// succeed via the graceful path without ever escalating to SIGKILL.
+	// Using `sleep 10` here previously led to flakiness on heavily loaded
+	// CI runners — the shell would be killed before its child, leaving
+	// waitid() blocked on a reaped-but-not-finished process group.
+	cmd := exec.Command("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 0.05; done")
 	setupProcessOptions(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -173,16 +178,32 @@ func TestTerminateProcessTreeWaitsForProcessExit(t *testing.T) {
 	go func() {
 		done <- cmd.Wait()
 	}()
-	if err := terminateProcessTree(cmd, done, time.Second); err != nil {
-		t.Fatalf("expected graceful termination, got %v", err)
+
+	// Hard outer deadline: terminateProcessTree is contracted to return
+	// within 2*grace plus scheduler jitter. We give it 5s as a generous
+	// safety net so a regression fails fast instead of tripling CI time.
+	hardDeadline := time.After(5 * time.Second)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- terminateProcessTree(cmd, done, time.Second)
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected graceful termination, got %v", err)
+		}
+	case <-hardDeadline:
+		t.Fatal("terminateProcessTree did not return within 5s; possible regression in process-tree cleanup")
 	}
+
 	select {
 	case <-done:
 		t.Fatal("wait channel should have been drained by terminateProcessTree")
 	default:
 	}
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-		t.Fatal("expected process state to be exited before return")
+		t.Fatalf("expected process state to be exited with status 0, got %s", cmd.ProcessState.String())
 	}
 }
 

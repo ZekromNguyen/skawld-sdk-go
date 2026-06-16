@@ -26,6 +26,16 @@ type PermissionOptions struct {
 	CanUseTool permissions.CanUseTool
 }
 
+// ProblemSolvingOptions enables lightweight orchestration hints that help a
+// coding agent choose better next actions without changing provider APIs.
+type ProblemSolvingOptions struct {
+	Enabled                  bool
+	AutoRepoMap              bool
+	RequirePlanBeforeWrite   bool
+	AutoVerify               bool
+	MaxConsecutiveToolErrors int
+}
+
 // AgentOptions configures an Agent. NewAgent clones the supplied Tools
 // registry before adding runtime tools, so callers keep ownership of their
 // registry after construction.
@@ -41,6 +51,7 @@ type AgentOptions struct {
 	Logger                 *slog.Logger
 	Observer               core.Observer
 	SystemPrompt           string
+	ProblemSolving         ProblemSolvingOptions
 	MaxRetries             int
 	MaxOutputTokens        *int
 	IncludePartialMessages bool
@@ -94,6 +105,7 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	} else {
 		opts.Tools = opts.Tools.Clone()
 	}
+	opts.ProblemSolving = normalizeProblemSolvingOptions(opts.ProblemSolving)
 	if opts.CWD == "" {
 		cwd, _ := os.Getwd()
 		opts.CWD = cwd
@@ -143,6 +155,21 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	a.system = buildSystemBlocks(opts.CWD, opts.Permissions.Mode, opts.Tools.Names(), opts.SystemPrompt)
 	a.refreshStaticProviderInputs(a.system)
 	return a, nil
+}
+
+func normalizeProblemSolvingOptions(opts ProblemSolvingOptions) ProblemSolvingOptions {
+	if !opts.Enabled && !opts.AutoRepoMap && !opts.RequirePlanBeforeWrite && !opts.AutoVerify && opts.MaxConsecutiveToolErrors == 0 {
+		opts.Enabled = true
+		opts.AutoRepoMap = true
+		opts.RequirePlanBeforeWrite = true
+		opts.AutoVerify = true
+		opts.MaxConsecutiveToolErrors = 2
+		return opts
+	}
+	if opts.MaxConsecutiveToolErrors <= 0 {
+		opts.MaxConsecutiveToolErrors = 2
+	}
+	return opts
 }
 
 type SessionOptions struct {

@@ -162,7 +162,7 @@ func parseGrepInput(raw map[string]interface{}) (grepInput, error) {
 		out.Path = p
 	}
 	if g, ok := asString(raw["glob"]); ok {
-		out.Glob = filepath.ToSlash(g)
+		out.Glob = strings.ReplaceAll(filepath.ToSlash(g), `\`, "/")
 	}
 	if typ, ok := asString(raw["type"]); ok {
 		out.Type = typ

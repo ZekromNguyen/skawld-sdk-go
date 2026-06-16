@@ -173,6 +173,7 @@ func (s *Session) buildProviderRequest(ctx context.Context, opts RunOptions, ove
 		}
 		system = append(system, core.SystemBlock{Type: "text", Text: skillOverlaySystemText(overlay)})
 	}
+	system = appendProblemSolvingSystemBlock(system, s.problemState.systemText(s.agent.opts.ProblemSolving))
 	maxOut := s.agent.opts.MaxOutputTokens
 	if opts.MaxOutputTokens != nil {
 		maxOut = opts.MaxOutputTokens
@@ -460,6 +461,7 @@ func (s *Session) executePreparedToolCall(ctx context.Context, runID string, cal
 		isErr = true
 		content = "Tool call aborted."
 	}
+	s.problemState.recordToolCall(s.agent.opts.CWD, call.tool.Name(), call.input, isErr, content)
 	var observedErr error
 	if err != nil {
 		observedErr = err

@@ -49,6 +49,7 @@ type Session struct {
 	active              bool
 	cancelActive        context.CancelFunc
 	lastUsage           core.Usage
+	problemState        *problemRunState
 }
 
 type skillOverlay struct {
@@ -112,6 +113,7 @@ func newSession(agent *Agent, rec core.SessionRecord, providerHistory []core.Mes
 		completeHistory: append([]core.Message(nil), providerHistory...), invokedSkills: append([]core.InvokedSkillRecord(nil), rec.InvokedSkills...),
 		initialEvents: append([]core.Event(nil), initialEvents...),
 		readTracker:   tools.NewFileReadTracker(),
+		problemState:  newProblemRunState(),
 	}
 }
 

@@ -84,6 +84,101 @@ func truncate(s string, cap int) string {
 	return s[:cap] + fmt.Sprintf("... (%d chars truncated)", len(s)-cap)
 }
 
+func displayPath(cwd, path string) string {
+	rel, err := filepath.Rel(cwd, path)
+	if err == nil && rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(filepath.Clean(path))
+}
+
+func lineCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	count := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		count++
+	}
+	return count
+}
+
+func editHint(text, oldString string) string {
+	oldString = strings.TrimSpace(oldString)
+	if oldString == "" {
+		return "hint: old_string is empty after trimming; read the target region and include exact surrounding context."
+	}
+	lines := strings.Split(text, "\n")
+	needle := firstNonEmptyLine(oldString)
+	if needle == "" {
+		return "hint: read the target region again and copy the exact old_string including whitespace."
+	}
+	needleWords := strings.Fields(needle)
+	for i, line := range lines {
+		if strings.Contains(line, needle) || strings.Contains(strings.TrimSpace(line), strings.TrimSpace(needle)) || lineSharesWords(line, needleWords) {
+			start := max(0, i-2)
+			end := min(len(lines), i+3)
+			var b strings.Builder
+			b.WriteString("hint: no exact match. Nearby candidate:\n")
+			for j := start; j < end; j++ {
+				b.WriteString(fmt.Sprintf("%d\t%s\n", j+1, strings.TrimSuffix(lines[j], "\r")))
+			}
+			return strings.TrimRight(b.String(), "\n")
+		}
+	}
+	return "hint: read the file or use Grep to find the current text before retrying Edit."
+}
+
+func firstNonEmptyLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func lineSharesWords(line string, words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	line = strings.ToLower(line)
+	matches := 0
+	for _, word := range words {
+		word = strings.ToLower(strings.Trim(word, "\"'`.,;:(){}[]"))
+		if len(word) < 3 {
+			continue
+		}
+		if strings.Contains(line, word) {
+			matches++
+		}
+	}
+	return matches > 0
+}
+
+func bashHint(command, output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lowerOut := strings.ToLower(output)
+	lowerCmd := strings.ToLower(command)
+	switch {
+	case strings.Contains(lowerOut, "no such file") || strings.Contains(lowerOut, "cannot find"):
+		return "verify the path with Glob or Read before retrying"
+	case strings.Contains(lowerOut, "permission denied") || strings.Contains(lowerOut, "access is denied"):
+		return "check permissions or choose a non-privileged command"
+	case strings.Contains(lowerOut, "command not found") || strings.Contains(lowerOut, "not recognized"):
+		return "check whether the executable exists or use the repo's documented command"
+	case strings.Contains(lowerCmd, "go test") && strings.Contains(lowerOut, "build failed"):
+		return "inspect the first compile error and run a targeted package test after editing"
+	case strings.Contains(lowerCmd, "go vet"):
+		return "fix the first vet diagnostic, then rerun go vet ./..."
+	default:
+		return "inspect the first error line and change strategy before retrying"
+	}
+}
+
 func isDevicePath(absPath string) bool {
 	slash := filepath.ToSlash(absPath)
 	devicePrefixes := []string{"/dev/zero", "/dev/random", "/dev/urandom", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/proc/"}
@@ -225,38 +320,48 @@ func globMatch(pattern, rel string) bool {
 	return re.MatchString(filepath.ToSlash(rel))
 }
 
+// terminateProcessTree asks a running command to exit gracefully, then
+// force-kills it if it hasn't complied within grace. The wait channel
+// (typically fed by cmd.Wait in a goroutine) is drained so callers can
+// still observe the final exit. The function is guaranteed to return
+// within at most 2*grace no matter what, and never panics.
+//
+// taskTerminateTree and taskKillTree live in bash_sys_posix.go and
+// bash_sys_windows.go so the syscall details stay platform-specific.
 func terminateProcessTree(cmd *exec.Cmd, done <-chan error, grace time.Duration) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
+	if grace <= 0 {
+		// No graceful phase requested — go straight to SIGKILL.
+		taskKillTree(cmd.Process.Pid)
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(time.Second):
+			return fmt.Errorf("process %d did not terminate after kill", cmd.Process.Pid)
+		}
+	}
+
 	taskTerminateTree(cmd.Process.Pid)
 	select {
-	case err := <-done:
+	case err, ok := <-done:
+		if !ok {
+			return nil
+		}
 		return err
 	case <-time.After(grace):
-		taskKillTree(cmd.Process.Pid)
-		return <-done
+	}
+
+	taskKillTree(cmd.Process.Pid)
+	select {
+	case err, ok := <-done:
+		if !ok {
+			return fmt.Errorf("process %d did not terminate after kill", cmd.Process.Pid)
+		}
+		return err
+	case <-time.After(grace):
+		return fmt.Errorf("process %d did not terminate after kill", cmd.Process.Pid)
 	}
 }
 
-func taskTerminateTree(pid int) {
-	if pid <= 0 {
-		return
-	}
-	if os.PathSeparator == '\\' {
-		_ = exec.Command("taskkill", "/pid", fmt.Sprint(pid), "/t").Run()
-		return
-	}
-	_ = exec.Command("kill", "-TERM", fmt.Sprintf("-%d", pid)).Run()
-}
-
-func taskKillTree(pid int) {
-	if pid <= 0 {
-		return
-	}
-	if os.PathSeparator == '\\' {
-		_ = exec.Command("taskkill", "/pid", fmt.Sprint(pid), "/t", "/f").Run()
-		return
-	}
-	_ = exec.Command("kill", "-KILL", fmt.Sprintf("-%d", pid)).Run()
-}

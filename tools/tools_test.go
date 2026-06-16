@@ -131,6 +131,39 @@ func TestEditPreservesCRLFLineEndings(t *testing.T) {
 	}
 }
 
+func TestEditMissingOldStringReturnsCandidateHint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("alpha\nbeta target\ngamma\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := core.ToolContext{
+		Context:         context.Background(),
+		CWD:             dir,
+		FileReadTracker: NewFileReadTracker(),
+		SessionID:       "s",
+		RunID:           "r",
+		SessionStore:    sessions.NewInMemoryStore(),
+	}
+	read := ReadTool{}
+	readInput, _ := read.Validate(map[string]interface{}{"file_path": "file.txt"})
+	if _, err := read.Execute(readInput, ctx); err != nil {
+		t.Fatal(err)
+	}
+	edit := EditTool{}
+	editInput, err := edit.Validate(map[string]interface{}{"file_path": "file.txt", "old_string": "beta missing", "new_string": "delta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := edit.Execute(editInput, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(fmt.Sprint(res.Content), "Nearby candidate") {
+		t.Fatalf("expected nearby candidate hint, got %+v", res)
+	}
+}
+
 func TestFilesystemPolicyRestrictsRoots(t *testing.T) {
 	dir := t.TempDir()
 	allowed := filepath.Join(dir, "allowed")

@@ -94,7 +94,8 @@ func (t ReadTool) Execute(input map[string]interface{}, ctx core.ToolContext) (c
 	if out == "" {
 		return core.ToolResult{Content: "<file is empty>", Summary: t.Summarize(input)}, nil
 	}
-	return core.ToolResult{Content: truncate(out, 30000), Summary: t.Summarize(input)}, nil
+	content := fmt.Sprintf("%s\n<metadata path=%q size_bytes=%d offset=%d limit=%d>", truncate(out, 30000), displayPath(ctx.CWD, path), info.Size(), offset, limit)
+	return core.ToolResult{Content: content, Summary: t.Summarize(input)}, nil
 }
 
 func imageMedia(ext string) string {

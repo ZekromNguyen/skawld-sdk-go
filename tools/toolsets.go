@@ -16,7 +16,7 @@ var BuiltinToolsets = []Toolset{
 		Name:        "file",
 		Label:       "File Operations",
 		Description: "Read, write, edit, and search files",
-		Tools:       []string{"Read", "Write", "Edit", "Glob"},
+		Tools:       []string{"Read", "RepoMap", "Write", "Edit", "Glob"},
 	},
 	{
 		Name:        "terminal",
@@ -82,7 +82,7 @@ var BuiltinToolsets = []Toolset{
 		Name:        "safe",
 		Label:       "Safe (read-only)",
 		Description: "Read-only subset — no writes, no execution",
-		Tools:       []string{"Read", "Glob", "Grep", "TaskList", "TaskGet", "MemoryRead", "MemorySearch", "SessionSearch", "CronList", "XSearch", "VisionAnalyze"},
+		Tools:       []string{"Read", "RepoMap", "Glob", "Grep", "TaskList", "TaskGet", "MemoryRead", "MemorySearch", "SessionSearch", "CronList", "XSearch", "VisionAnalyze"},
 	},
 }
 

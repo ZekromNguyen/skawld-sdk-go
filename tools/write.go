@@ -46,5 +46,6 @@ func (t WriteTool) Execute(input map[string]interface{}, ctx core.ToolContext) (
 	}
 	ctx.FileReadTracker.MarkRead(path)
 	rel, _ := filepath.Rel(ctx.CWD, path)
-	return core.ToolResult{Content: fmt.Sprintf("wrote %d bytes to %s", len([]byte(input["content"].(string))), rel), Summary: t.Summarize(input)}, nil
+	content := input["content"].(string)
+	return core.ToolResult{Content: fmt.Sprintf("wrote %d bytes to %s\nmetadata: path=%q changed=true line_count=%d", len([]byte(content)), rel, filepath.ToSlash(rel), lineCount(content)), Summary: t.Summarize(input)}, nil
 }

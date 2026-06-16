@@ -74,7 +74,7 @@ func (t BashTool) Summarize(input map[string]interface{}) string {
 	return "Bash: " + cmd
 }
 
-func formatOutput(stdout, stderr *accumulator, exitCode int) string {
+func formatOutput(stdout, stderr *accumulator, exitCode int, command string) string {
 	combined := string(stdout.text)
 	if len(stderr.text) > 0 {
 		combined += "\n---\n" + string(stderr.text)
@@ -99,6 +99,10 @@ func formatOutput(stdout, stderr *accumulator, exitCode int) string {
 		truncationNote = fmt.Sprintf("\n… (%d chars truncated)", omitted+totalTruncated)
 	}
 
+	hint := bashHint(command, combined, exitCode)
+	if hint != "" {
+		truncationNote += "\nhint: " + hint
+	}
 	return fmt.Sprintf("%s%s\nexit: %d", combined, truncationNote, exitCode)
 }
 
@@ -157,7 +161,7 @@ func (t BashTool) Execute(input map[string]interface{}, ctx core.ToolContext) (c
 			}
 		}
 		return core.ToolResult{
-			Content: formatOutput(stdout, stderr, exitCode),
+			Content: formatOutput(stdout, stderr, exitCode, input["command"].(string)),
 			Summary: t.Summarize(input),
 		}, nil
 	case <-timer.C:

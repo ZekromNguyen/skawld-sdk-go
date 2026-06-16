@@ -1,18 +1,224 @@
-name: Go
+name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same PR/branch when a new commit arrives.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Shared defaults so each job doesn't repeat boilerplate.
+env:
+  GO_VERSION_FILE: go.mod
+  GOPROXY: https://proxy.golang.org,direct
+  GOSUMDB: sum.golang.org
 
 jobs:
-  test:
+  # ---------------------------------------------------------------------------
+  # 1. Lint: format + vet. Fast, runs first; failure here blocks every other
+  #    job from being useful so it's a hard gate.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (gofmt + go vet)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-      - run: gofmt -w .
-      - run: git diff --exit-code
-      - run: go vet ./...
-      - run: go test ./...
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: gofmt check (fail if any file needs reformatting)
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet ./...
+        run: go vet ./...
+
+  # ---------------------------------------------------------------------------
+  # 2. Build matrix: verify the module compiles on every supported OS/arch.
+  #    No tests run here — just `go build` so a typo doesn't ship.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
+            arch: arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: go build ./...
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: go build ./...
+
+  # ---------------------------------------------------------------------------
+  # 3. Unit tests on Linux (the primary execution environment). Runs with
+  #    -race so concurrency bugs surface immediately.
+  # ---------------------------------------------------------------------------
+  test-linux:
+    name: Test (Linux, race)
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: go test ./... (race)
+        run: go test -race -count=1 -timeout=10m ./...
+
+  # ---------------------------------------------------------------------------
+  # 4. Unit tests on Windows. Catches path-separator, Getenv, and process
+  #    behaviour differences that Linux doesn't exercise (path-separator
+  #    branching lives in tools/bash_sys_*.go).
+  # ---------------------------------------------------------------------------
+  test-windows:
+    name: Test (Windows, race)
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: go test ./... (race)
+        run: go test -race -count=1 -timeout=10m ./...
+
+  # ---------------------------------------------------------------------------
+  # 5. Coverage: collect coverage on Linux, upload to Codecov when a secret
+  #    is configured, and fail the job if total coverage drops below the
+  #    configured threshold. Skipped gracefully on forks where the secret
+  #    isn't available.
+  # ---------------------------------------------------------------------------
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: Run tests with coverage
+        run: |
+          go test -race -count=1 -timeout=10m -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Summarise coverage
+        run: |
+          go tool cover -func=coverage.out | tail -n 1
+
+      - name: Upload coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+          verbose: false
+
+  # ---------------------------------------------------------------------------
+  # 6. Aggregate: surfaces one consolidated status on the PR — green only
+  #    if every required job succeeded.
+  # ---------------------------------------------------------------------------
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [lint, build, test-linux, test-windows, coverage]
+    if: always()
+    timeout-minutes: 2
+    steps:
+      - name: Verify all required jobs passed
+        run: |
+          {
+            echo "needs.lint.result=${{ needs.lint.result }}"
+            echo "needs.build.result=${{ needs.build.result }}"
+            echo "needs.test-linux.result=${{ needs.test-linux.result }}"
+            echo "needs.test-windows.result=${{ needs.test-windows.result }}"
+            echo "needs.coverage.result=${{ needs.coverage.result }}"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          for status in \
+            "${{ needs.lint.result }}" \
+            "${{ needs.test-linux.result }}" \
+            "${{ needs.test-windows.result }}"; do
+            if [ "$status" != "success" ] && [ "$status" != "skipped" ]; then
+              echo "Required job reported status '$status'."
+              failed=1
+            fi
+          done
+          # `build` and `coverage` are reported as a single matrix result
+          # string with commas; treat anything other than all-success as bad.
+          for status in "${{ needs.build.result }}" "${{ needs.coverage.result }}"; do
+            case "$status" in
+              ""|success|skipped) ;;
+              *) echo "Required job reported status '$status'."; failed=1 ;;
+            esac
+          done
+          if [ "$failed" = "1" ]; then
+            exit 1
+          fi
+          echo "All required jobs succeeded."
+

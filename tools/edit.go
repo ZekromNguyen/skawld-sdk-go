@@ -63,7 +63,7 @@ func (t EditTool) Execute(input map[string]interface{}, ctx core.ToolContext) (c
 	text := string(data)
 	count := strings.Count(text, oldString)
 	if count == 0 {
-		return core.ToolResult{Content: "Error: old_string not found in file.", Summary: t.Summarize(input), IsError: true}, nil
+		return core.ToolResult{Content: "Error: old_string not found in file.\n" + editHint(text, oldString), Summary: t.Summarize(input), IsError: true}, nil
 	}
 	if count > 1 && !asBool(input["replace_all"]) {
 		return core.ToolResult{Content: fmt.Sprintf("Error: old_string matches %d occurrences; pass replace_all or provide more context.", count), Summary: t.Summarize(input), IsError: true}, nil
@@ -80,5 +80,5 @@ func (t EditTool) Execute(input map[string]interface{}, ctx core.ToolContext) (c
 		return core.ToolResult{Content: "Error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}
 	rel, _ := filepath.Rel(ctx.CWD, path)
-	return core.ToolResult{Content: fmt.Sprintf("Edited %s: %+d lines", rel, strings.Count(next, "\n")-strings.Count(text, "\n")), Summary: t.Summarize(input)}, nil
+	return core.ToolResult{Content: fmt.Sprintf("Edited %s: %+d lines\nmetadata: path=%q changed=true occurrences=%d line_delta=%+d", rel, strings.Count(next, "\n")-strings.Count(text, "\n"), filepath.ToSlash(rel), count, strings.Count(next, "\n")-strings.Count(text, "\n")), Summary: t.Summarize(input)}, nil
 }

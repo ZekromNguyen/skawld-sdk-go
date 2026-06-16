@@ -111,6 +111,7 @@ func (r *Registry) Unregister(name string) bool {
 func DefaultTools() *Registry {
 	r := NewRegistry()
 	_ = r.Register(ReadTool{})
+	_ = r.Register(RepoMapTool{})
 	_ = r.Register(WriteTool{})
 	_ = r.Register(EditTool{})
 	_ = r.Register(BashTool{})

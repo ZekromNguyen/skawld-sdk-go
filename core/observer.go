@@ -25,6 +25,8 @@ type Observation struct {
 	Operation  string
 	SessionID  string
 	RunID      string
+	TenantID   string
+	ActorID    string
 	ProviderID string
 	ToolName   string
 	Attempt    int

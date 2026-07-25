@@ -58,6 +58,32 @@ func TestMCPToolValidateRequiredFields(t *testing.T) {
 	}
 }
 
+func TestMCPToolValidatePropertyTypesAndAdditionalProperties(t *testing.T) {
+	tool := &Tool{displayName: "mcp__s__typed", remote: RemoteTool{
+		Name: "typed",
+		InputSchema: map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]interface{}{
+				"count": map[string]interface{}{"type": "integer"},
+				"mode":  map[string]interface{}{"type": "string", "enum": []interface{}{"safe", "fast"}},
+			},
+		},
+	}}
+	if _, err := tool.Validate(map[string]interface{}{"count": "two", "mode": "safe"}); err == nil {
+		t.Fatal("expected property type validation error")
+	}
+	if _, err := tool.Validate(map[string]interface{}{"count": 2.0, "mode": "unsafe"}); err == nil {
+		t.Fatal("expected enum validation error")
+	}
+	if _, err := tool.Validate(map[string]interface{}{"count": 2.0, "mode": "safe", "extra": true}); err == nil {
+		t.Fatal("expected additional property validation error")
+	}
+	if _, err := tool.Validate(map[string]interface{}{"count": 2.0, "mode": "safe"}); err != nil {
+		t.Fatalf("expected valid typed input: %v", err)
+	}
+}
+
 func TestClientCallToolUsesRemoteName(t *testing.T) {
 	tr := &fakeTransport{results: []map[string]interface{}{
 		{"content": []interface{}{map[string]interface{}{"type": "text", "text": "ok"}}},

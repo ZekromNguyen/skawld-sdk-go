@@ -57,12 +57,15 @@ func TestLoadValidatesMissingAndInvalidConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"provider":"unknown","model":"gpt-5"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Load(LoadOptions{Path: path}); err == nil {
-		t.Fatal("expected unsupported provider error")
+	if cfg, _, err := Load(LoadOptions{Path: path}); err != nil || cfg.Provider != "unknown" {
+		t.Fatalf("custom provider identifier should survive structural config loading: cfg=%+v err=%v", cfg, err)
+	}
+	if _, _, err := LoadAgentOptions(context.Background(), LoadOptions{Path: path}); err == nil {
+		t.Fatal("expected the default provider factory to reject an unknown provider")
 	} else {
 		var skerr *core.SkawldError
 		if !errors.As(err, &skerr) || skerr.Kind != core.ErrorConfig {
-			t.Fatalf("expected typed config error through wrapping, got %T %[1]v", err)
+			t.Fatalf("expected typed config error from default factory, got %T %[1]v", err)
 		}
 	}
 }

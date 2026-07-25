@@ -37,4 +37,3 @@ func taskKillTree(pid int) {
 	}
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
 }
-

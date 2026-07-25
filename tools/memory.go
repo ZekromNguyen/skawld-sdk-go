@@ -198,11 +198,25 @@ func (t SessionSearchTool) Execute(input map[string]interface{}, ctx core.ToolCo
 		return core.ToolResult{Content: "Session store is not configured.", Summary: t.Summarize(input), IsError: true}, nil
 	}
 	in := sessionSearchInputFrom(input)
-	sessions, err := ctx.SessionStore.List(ctx.Context, in.MaxSessions, 0)
+	sessions, err := ctx.SessionStore.List(ctx.Context, 0, 0)
 	if err != nil {
 		return core.ToolResult{Content: "SessionSearch error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}
-	matches, err := searchSessions(ctx, sessions, in)
+	principal := ctx.Principal
+	if !principal.Valid() {
+		principal, _ = core.PrincipalFromContext(ctx.Context)
+	}
+	visible := make([]core.SessionRecord, 0, len(sessions))
+	for _, session := range sessions {
+		if !core.CanAccessSession(principal, session.Meta) {
+			continue
+		}
+		visible = append(visible, session)
+		if len(visible) == in.MaxSessions {
+			break
+		}
+	}
+	matches, err := searchSessions(ctx, visible, in)
 	if err != nil {
 		return core.ToolResult{Content: "SessionSearch error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}

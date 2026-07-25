@@ -34,6 +34,12 @@ func (a *Agent) observe(ctx context.Context, observation core.Observation) {
 	if observation.RunID != "" {
 		attrs = append(attrs, slog.String("run_id", observation.RunID))
 	}
+	if observation.TenantID != "" {
+		attrs = append(attrs, slog.String("tenant_id", observation.TenantID))
+	}
+	if observation.ActorID != "" {
+		attrs = append(attrs, slog.String("actor_id", observation.ActorID))
+	}
 	if observation.ProviderID != "" {
 		attrs = append(attrs, slog.String("provider_id", observation.ProviderID))
 	}

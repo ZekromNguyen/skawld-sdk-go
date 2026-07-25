@@ -36,22 +36,38 @@ type ProblemSolvingOptions struct {
 	MaxConsecutiveToolErrors int
 }
 
+type ProviderRetryPolicy struct {
+	// MaxRetries is additional attempts after the initial request. A value of
+	// zero explicitly disables retries when ProviderRetry is non-nil.
+	MaxRetries     int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+}
+
 // AgentOptions configures an Agent. NewAgent clones the supplied Tools
 // registry before adding runtime tools, so callers keep ownership of their
 // registry after construction.
 type AgentOptions struct {
-	Provider               core.Provider
-	ProviderFactory        core.ProviderFactory
-	Model                  core.ModelID
-	Tools                  *tools.Registry
-	Permissions            PermissionOptions
-	SessionStore           core.SessionStore
-	CWD                    string
-	FilesystemPolicy       tools.FilesystemPolicy
-	Logger                 *slog.Logger
-	Observer               core.Observer
-	SystemPrompt           string
-	ProblemSolving         ProblemSolvingOptions
+	Provider        core.Provider
+	ProviderFactory core.ProviderFactory
+	Model           core.ModelID
+	Tools           *tools.Registry
+	// CloseTools transfers registered tool resource lifecycle to Agent.Close.
+	// Tools constructed internally are always owned by the Agent.
+	CloseTools       bool
+	Permissions      PermissionOptions
+	SessionStore     core.SessionStore
+	CWD              string
+	FilesystemPolicy tools.FilesystemPolicy
+	Principal        core.Principal
+	ToolProfile      tools.Profile
+	Logger           *slog.Logger
+	Observer         core.Observer
+	SystemPrompt     string
+	ProblemSolving   ProblemSolvingOptions
+	ProviderRetry    *ProviderRetryPolicy
+	// MaxRetries is retained for compatibility. Prefer ProviderRetry, whose
+	// non-nil zero value can explicitly disable retries.
 	MaxRetries             int
 	MaxOutputTokens        *int
 	IncludePartialMessages bool
@@ -71,20 +87,28 @@ type AgentOptions struct {
 // concurrently. Close should be called when MCP or store resources are no
 // longer needed.
 type Agent struct {
-	opts      AgentOptions
-	perm      *permissions.Engine
-	store     core.SessionStore
-	system    []core.SystemBlock
-	systemMu  sync.RWMutex
-	staticMu  sync.RWMutex
-	toolCache []core.ToolSchema
-	staticLen int
-	mcp       *mcp.Manager
-	skills    *skills.Manager
-	subagents *subagents.Registry
-	mcpMu     sync.Mutex
-	skillsMu  sync.Mutex
-	subMu     sync.Mutex
+	opts            AgentOptions
+	perm            *permissions.Engine
+	store           core.SessionStore
+	system          []core.SystemBlock
+	systemMu        sync.RWMutex
+	staticMu        sync.RWMutex
+	toolCache       []core.ToolSchema
+	staticLen       int
+	mcp             *mcp.Manager
+	skills          *skills.Manager
+	subagents       *subagents.Registry
+	mcpMu           sync.Mutex
+	skillsMu        sync.Mutex
+	subMu           sync.Mutex
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	lifecycleMu     sync.Mutex
+	runWG           sync.WaitGroup
+	closed          bool
+	closeOnce       sync.Once
+	closeErr        error
+	ownsTools       bool
 }
 
 func NewAgent(opts AgentOptions) (*Agent, error) {
@@ -100,8 +124,16 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	if opts.Model == "" {
 		return nil, core.NewConfigError("Agent requires a model")
 	}
+	ownsTools := opts.Tools == nil || opts.CloseTools
 	if opts.Tools == nil {
-		opts.Tools = tools.DefaultTools()
+		if opts.ToolProfile == "" {
+			opts.ToolProfile = tools.ProfileCoding
+		}
+		var err error
+		opts.Tools, err = tools.ToolsForProfile(opts.ToolProfile)
+		if err != nil {
+			return nil, core.NewConfigError(err.Error())
+		}
 	} else {
 		opts.Tools = opts.Tools.Clone()
 	}
@@ -116,8 +148,29 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	if opts.SessionStore == nil {
 		opts.SessionStore = sessions.NewInMemoryStore()
 	}
-	if opts.MaxRetries == 0 {
-		opts.MaxRetries = 5
+	if opts.ProviderRetry == nil {
+		if opts.MaxRetries == 0 {
+			opts.MaxRetries = 5
+		}
+		opts.ProviderRetry = &ProviderRetryPolicy{
+			MaxRetries: opts.MaxRetries, InitialBackoff: 250 * time.Millisecond, MaxBackoff: 5 * time.Second,
+		}
+	} else {
+		if opts.ProviderRetry.MaxRetries < 0 {
+			return nil, core.NewConfigError("provider retry max retries must not be negative")
+		}
+		retry := *opts.ProviderRetry
+		if retry.InitialBackoff <= 0 {
+			retry.InitialBackoff = 250 * time.Millisecond
+		}
+		if retry.MaxBackoff <= 0 {
+			retry.MaxBackoff = 5 * time.Second
+		}
+		if retry.MaxBackoff < retry.InitialBackoff {
+			return nil, core.NewConfigError("provider retry max backoff must be at least initial backoff")
+		}
+		opts.ProviderRetry = &retry
+		opts.MaxRetries = retry.MaxRetries
 	}
 	if opts.MaxTurns == 0 {
 		opts.MaxTurns = 1000
@@ -137,7 +190,8 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	if opts.SubagentsDir == "" {
 		opts.SubagentsDir = filepath.Join(opts.CWD, ".skawld", "agents")
 	}
-	a := &Agent{opts: opts}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	a := &Agent{opts: opts, lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel, ownsTools: ownsTools}
 	a.store = &observedSessionStore{inner: opts.SessionStore, agent: a}
 	if len(opts.MCPServers) > 0 {
 		a.mcp = mcp.NewManager(opts.MCPServers)
@@ -173,18 +227,42 @@ func normalizeProblemSolvingOptions(opts ProblemSolvingOptions) ProblemSolvingOp
 }
 
 type SessionOptions struct {
-	ID   string
-	Meta map[string]interface{}
+	ID        string
+	Meta      map[string]interface{}
+	Principal core.Principal
 }
 
 func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, error) {
-	rec, err := a.store.Create(ctx, opts.ID, opts.Meta)
+	a.lifecycleMu.Lock()
+	closed := a.closed
+	a.lifecycleMu.Unlock()
+	if closed {
+		return nil, core.NewConfigError("agent is closed")
+	}
+	principal := opts.Principal
+	if !principal.Valid() {
+		principal = a.opts.Principal
+	}
+	meta, ok := core.BindPrincipalToSessionMeta(opts.Meta, principal)
+	if !ok {
+		return nil, core.NewConfigError("session metadata conflicts with authenticated principal")
+	}
+	if principal.Valid() {
+		ctx = core.WithPrincipal(ctx, principal)
+	}
+	rec, err := a.store.Create(ctx, opts.ID, meta)
 	if err != nil {
 		return nil, err
+	}
+	if !core.CanAccessSession(principal, rec.Meta) {
+		return nil, core.NewPermissionError("session belongs to another tenant")
 	}
 	if loaded, ok, err := a.store.Load(ctx, rec.ID); err != nil {
 		return nil, err
 	} else if ok {
+		if !core.CanAccessSession(principal, loaded.Meta) {
+			return nil, core.NewPermissionError("session belongs to another tenant")
+		}
 		rec = loaded
 	}
 	stored, err := a.store.LoadMessages(ctx, rec.ID)
@@ -195,7 +273,7 @@ func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, err
 	for _, sm := range stored {
 		view = append(view, sm.Message)
 	}
-	return newSession(a, rec, view, nil), nil
+	return newSession(a, rec, view, nil, principal), nil
 }
 
 func (a *Agent) loadRuntime(ctx context.Context) ([]core.Event, error) {
@@ -250,18 +328,45 @@ func (a *Agent) loadSubagents() error {
 }
 
 func (a *Agent) Close() error {
-	var errs []error
-	if a.mcp != nil {
-		if err := a.mcp.Close(); err != nil {
-			errs = append(errs, err)
+	a.closeOnce.Do(func() {
+		a.lifecycleMu.Lock()
+		a.closed = true
+		a.lifecycleCancel()
+		a.lifecycleMu.Unlock()
+		a.runWG.Wait()
+		var errs []error
+		if a.mcp != nil {
+			if err := a.mcp.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
-	}
-	if a.store != nil {
-		if err := a.store.Close(); err != nil {
-			errs = append(errs, err)
+		if a.ownsTools && a.opts.Tools != nil {
+			if err := a.opts.Tools.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
+		if a.store != nil {
+			if err := a.store.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		a.closeErr = errors.Join(errs...)
+	})
+	return a.closeErr
+}
+
+func (a *Agent) beginRun() bool {
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+	if a.closed {
+		return false
 	}
-	return errors.Join(errs...)
+	a.runWG.Add(1)
+	return true
+}
+
+func (a *Agent) endRun() {
+	a.runWG.Done()
 }
 
 func (a *Agent) Options() AgentOptions {

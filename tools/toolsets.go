@@ -81,8 +81,8 @@ var BuiltinToolsets = []Toolset{
 	{
 		Name:        "safe",
 		Label:       "Safe (read-only)",
-		Description: "Read-only subset — no writes, no execution",
-		Tools:       []string{"Read", "RepoMap", "Glob", "Grep", "TaskList", "TaskGet", "MemoryRead", "MemorySearch", "SessionSearch", "CronList", "XSearch", "VisionAnalyze"},
+		Description: "Local read-only subset — no writes, execution, network, memory, or cross-session access",
+		Tools:       []string{"Read", "RepoMap", "Glob", "Grep", "TaskList", "TaskGet"},
 	},
 }
 

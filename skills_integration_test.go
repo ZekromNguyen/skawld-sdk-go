@@ -126,11 +126,11 @@ Review $ARGUMENTS now.`)
 	if !sawLoaded || !sawInvoked || !sawCompleted {
 		t.Fatalf("expected skill events loaded=%t invoked=%t completed=%t", sawLoaded, sawInvoked, sawCompleted)
 	}
-	if calls != 1 {
-		t.Fatalf("expected write probe to run via allowed-tools overlay, got %d", calls)
+	if calls != 0 {
+		t.Fatalf("expected denied write probe not to run, got %d calls", calls)
 	}
-	if permissionCallbacks != 0 {
-		t.Fatalf("expected overlay to avoid permission prompt callback, got %d callbacks", permissionCallbacks)
+	if permissionCallbacks != 1 {
+		t.Fatalf("expected skill tool to pass through the permission callback once, got %d callbacks", permissionCallbacks)
 	}
 	loaded, ok, err := store.Load(context.Background(), "skills")
 	if err != nil || !ok {
@@ -146,6 +146,9 @@ Review $ARGUMENTS now.`)
 	}
 	if !containsSystem(provider.requests[1].System, "Review main.go now.") {
 		t.Fatalf("expected skill body in second request system: %+v", provider.requests[1].System)
+	}
+	if len(provider.requests[1].Tools) != 1 || provider.requests[1].Tools[0].Name != "WriteProbe" {
+		t.Fatalf("expected allowed_tools to filter capability visibility, got %+v", provider.requests[1].Tools)
 	}
 	if provider.requests[2].Model != "base-model" || containsSystem(provider.requests[2].System, "Review main.go now.") {
 		t.Fatalf("expected overlay to clear after one assistant turn; request=%+v", provider.requests[2])

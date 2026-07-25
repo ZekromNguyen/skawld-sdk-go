@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -32,6 +33,14 @@ func (t *Tool) InputSchema() map[string]interface{} {
 }
 func (t *Tool) Scope() core.ToolScope { return core.ToolScopeWrite }
 func (t *Tool) ParallelSafe() bool    { return false }
+func (t *Tool) ToolDescriptor() core.ToolDescriptor {
+	return core.ToolDescriptor{
+		Risk: core.RiskHigh, SideEffect: core.SideEffectUnknown,
+		Idempotency: core.IdempotencyUnsupported, Timeout: 2 * time.Minute,
+		Permissions:   []string{"mcp." + t.serverName + "." + t.remote.Name},
+		NetworkAccess: true, ContainsUntrusted: true,
+	}
+}
 func (t *Tool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	if raw == nil {
 		raw = map[string]interface{}{}
@@ -40,6 +49,9 @@ func (t *Tool) Validate(raw map[string]interface{}) (map[string]interface{}, err
 		if _, ok := raw[key]; !ok {
 			return nil, core.NewToolExecutionError(t.Name(), fmt.Sprintf("%s is required", key))
 		}
+	}
+	if err := validateSchemaValue(raw, t.remote.InputSchema, "$"); err != nil {
+		return nil, core.NewToolExecutionError(t.Name(), err.Error())
 	}
 	return raw, nil
 }
@@ -175,5 +187,100 @@ func requiredKeys(schema map[string]interface{}) []string {
 		return out
 	default:
 		return nil
+	}
+}
+
+func validateSchemaValue(value interface{}, schema map[string]interface{}, path string) error {
+	if schema == nil {
+		return nil
+	}
+	if allowed, ok := schema["enum"].([]interface{}); ok {
+		matched := false
+		for _, candidate := range allowed {
+			if reflect.DeepEqual(value, candidate) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%s must be one of the declared enum values", path)
+		}
+	}
+	schemaType, _ := schema["type"].(string)
+	switch schemaType {
+	case "":
+		return nil
+	case "object":
+		object, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("%s must be an object", path)
+		}
+		properties, _ := schema["properties"].(map[string]interface{})
+		for name, child := range object {
+			childSchema, declared := properties[name].(map[string]interface{})
+			if !declared {
+				if allow, ok := schema["additionalProperties"].(bool); ok && !allow {
+					return fmt.Errorf("%s.%s is not allowed", path, name)
+				}
+				continue
+			}
+			if err := validateSchemaValue(child, childSchema, path+"."+name); err != nil {
+				return err
+			}
+		}
+	case "array":
+		items, ok := value.([]interface{})
+		if !ok {
+			return fmt.Errorf("%s must be an array", path)
+		}
+		itemSchema, _ := schema["items"].(map[string]interface{})
+		for index, item := range items {
+			if err := validateSchemaValue(item, itemSchema, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s must be a string", path)
+		}
+	case "number":
+		if !isJSONNumber(value, false) {
+			return fmt.Errorf("%s must be a number", path)
+		}
+	case "integer":
+		if !isJSONNumber(value, true) {
+			return fmt.Errorf("%s must be an integer", path)
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s must be a boolean", path)
+		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s must be null", path)
+		}
+	default:
+		return fmt.Errorf("%s uses unsupported JSON schema type %q", path, schemaType)
+	}
+	return nil
+}
+
+func isJSONNumber(value interface{}, integer bool) bool {
+	switch number := value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	case float32:
+		return !integer || number == float32(int64(number))
+	case float64:
+		return !integer || number == float64(int64(number))
+	case json.Number:
+		if integer {
+			_, err := number.Int64()
+			return err == nil
+		}
+		_, err := number.Float64()
+		return err == nil
+	default:
+		return false
 	}
 }

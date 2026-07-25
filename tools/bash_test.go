@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"os/exec"
@@ -169,10 +170,17 @@ func TestTerminateProcessTreeWaitsForProcessExit(t *testing.T) {
 	// Using `sleep 10` here previously led to flakiness on heavily loaded
 	// CI runners — the shell would be killed before its child, leaving
 	// waitid() blocked on a reaped-but-not-finished process group.
-	cmd := exec.Command("sh", "-c", "trap 'exit 0' TERM; while true; do sleep 0.05; done")
+	cmd := exec.Command("sh", "-c", "trap 'exit 0' TERM; echo ready; while true; do sleep 0.05; done")
 	setupProcessOptions(cmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
+	}
+	if ready, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || ready != "ready\n" {
+		t.Fatalf("wait for shell signal handler: ready=%q err=%v", ready, err)
 	}
 	done := make(chan error, 1)
 	go func() {

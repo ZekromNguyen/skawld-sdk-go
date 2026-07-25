@@ -26,11 +26,13 @@ type Decision struct {
 }
 
 type CanUseToolRequest struct {
-	ToolName  string
-	ToolUseID string
-	Input     map[string]interface{}
-	Summary   string
-	Mode      core.PermissionMode
+	ToolName   string
+	ToolUseID  string
+	Input      map[string]interface{}
+	Summary    string
+	Mode       core.PermissionMode
+	Principal  core.Principal
+	Descriptor core.ToolDescriptor
 }
 
 type CanUseToolResponse struct {
@@ -69,6 +71,7 @@ type PendingCall struct {
 	CWD       string
 	SessionID string
 	RunID     string
+	Principal core.Principal
 }
 
 type Engine struct {
@@ -156,11 +159,13 @@ func (e *Engine) Resolve(ctx context.Context, call PendingCall) Decision {
 func (e *Engine) callPermissionCallback(ctx context.Context, call PendingCall) (CanUseToolResponse, error) {
 	start := time.Now()
 	resp, err := e.opts.CanUseTool(ctx, CanUseToolRequest{
-		ToolName:  call.Tool.Name(),
-		ToolUseID: call.ToolUseID,
-		Input:     call.Input,
-		Summary:   call.Tool.Summarize(call.Input),
-		Mode:      e.opts.Mode,
+		ToolName:   call.Tool.Name(),
+		ToolUseID:  call.ToolUseID,
+		Input:      call.Input,
+		Summary:    call.Tool.Summarize(call.Input),
+		Mode:       e.opts.Mode,
+		Principal:  call.Principal,
+		Descriptor: core.DescribeTool(call.Tool),
 	})
 	if e.opts.Observer != nil {
 		e.opts.Observer.Observe(ctx, core.Observation{
@@ -168,6 +173,8 @@ func (e *Engine) callPermissionCallback(ctx context.Context, call PendingCall) (
 			Operation:  "can_use_tool",
 			SessionID:  call.SessionID,
 			RunID:      call.RunID,
+			TenantID:   call.Principal.TenantID,
+			ActorID:    call.Principal.ActorID,
 			ToolName:   call.Tool.Name(),
 			DurationMS: time.Since(start).Milliseconds(),
 			Error:      err,
@@ -180,13 +187,17 @@ func (e *Engine) callPermissionCallback(ctx context.Context, call PendingCall) (
 }
 
 func modeDefault(tool core.Tool, mode core.PermissionMode) Decision {
-	if tool.Scope() == core.ToolScopeRead || isTaskTool(tool.Name()) {
-		return Decision{Decision: DecisionAllow}
-	}
 	if mode == core.PermissionModeYolo {
 		return Decision{Decision: DecisionAllow}
 	}
-	if tool.Scope() == core.ToolScopeWrite && mode == core.PermissionModeAcceptEdits {
+	descriptor := core.DescribeTool(tool)
+	if descriptor.Risk == core.RiskCritical || descriptor.Risk == core.RiskHigh || descriptor.NetworkAccess {
+		return Decision{Decision: DecisionAsk}
+	}
+	if tool.Scope() == core.ToolScopeRead || isTaskTool(tool.Name()) {
+		return Decision{Decision: DecisionAllow}
+	}
+	if tool.Scope() == core.ToolScopeWrite && mode == core.PermissionModeAcceptEdits && descriptor.SideEffect != core.SideEffectNonIdempotent {
 		return Decision{Decision: DecisionAllow}
 	}
 	return Decision{Decision: DecisionAsk}

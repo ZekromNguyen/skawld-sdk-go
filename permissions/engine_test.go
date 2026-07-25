@@ -298,11 +298,12 @@ func TestCanUseToolCallback(t *testing.T) {
 		t.Fatalf("expected callback allow, got %s", decision.Decision)
 	}
 	expected := CanUseToolRequest{
-		ToolName:  "Bash",
-		ToolUseID: "toolu_1",
-		Input:     input,
-		Summary:   "Bash",
-		Mode:      core.PermissionModeDefault,
+		ToolName:   "Bash",
+		ToolUseID:  "toolu_1",
+		Input:      input,
+		Summary:    "Bash",
+		Mode:       core.PermissionModeDefault,
+		Descriptor: core.DescribeTool(bashTool),
 	}
 	if !reflect.DeepEqual(captured, expected) {
 		t.Fatalf("callback request mismatch\nexpected: %#v\nactual:   %#v", expected, captured)

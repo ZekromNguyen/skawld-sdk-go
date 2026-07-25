@@ -22,22 +22,71 @@ type CronJob struct {
 	cancel     context.CancelFunc
 }
 
-// cronRegistry manages scheduled jobs across tool calls.
-var cronRegistry = struct {
-	sync.RWMutex
-	jobs map[string]*CronJob
-	seq  int
-}{jobs: make(map[string]*CronJob)}
+type CronManager struct {
+	mu     sync.RWMutex
+	jobs   map[string]*CronJob
+	seq    int
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func NewCronManager() *CronManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &CronManager{jobs: make(map[string]*CronJob), ctx: ctx, cancel: cancel}
+}
 
 // ─── CronCreate Tool ──────────────────────────────────────────────────────
 
-type CronCreateTool struct{}
+type CronCreateTool struct {
+	Manager *CronManager
+	once    sync.Once
+}
 
-func (CronCreateTool) Name() string { return "CronCreate" }
-func (CronCreateTool) Description() string {
+type CronListTool struct {
+	Manager *CronManager
+	once    sync.Once
+}
+
+type CronDeleteTool struct {
+	Manager *CronManager
+	once    sync.Once
+}
+
+func NewCronTools() (*CronCreateTool, *CronListTool, *CronDeleteTool) {
+	manager := NewCronManager()
+	return &CronCreateTool{Manager: manager}, &CronListTool{Manager: manager}, &CronDeleteTool{Manager: manager}
+}
+
+func (t *CronCreateTool) manager() *CronManager {
+	t.once.Do(func() {
+		if t.Manager == nil {
+			t.Manager = NewCronManager()
+		}
+	})
+	return t.Manager
+}
+func (t *CronListTool) manager() *CronManager {
+	t.once.Do(func() {
+		if t.Manager == nil {
+			t.Manager = NewCronManager()
+		}
+	})
+	return t.Manager
+}
+func (t *CronDeleteTool) manager() *CronManager {
+	t.once.Do(func() {
+		if t.Manager == nil {
+			t.Manager = NewCronManager()
+		}
+	})
+	return t.Manager
+}
+
+func (*CronCreateTool) Name() string { return "CronCreate" }
+func (*CronCreateTool) Description() string {
 	return "Schedule a prompt to fire at a regular interval using a 5-field cron expression (minute hour day-of-month month day-of-week)."
 }
-func (CronCreateTool) InputSchema() map[string]interface{} {
+func (*CronCreateTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -47,9 +96,9 @@ func (CronCreateTool) InputSchema() map[string]interface{} {
 		"required": []string{"cron", "prompt"},
 	}
 }
-func (CronCreateTool) Scope() core.ToolScope { return core.ToolScopeWrite }
-func (CronCreateTool) ParallelSafe() bool    { return true }
-func (t CronCreateTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (*CronCreateTool) Scope() core.ToolScope { return core.ToolScopeWrite }
+func (*CronCreateTool) ParallelSafe() bool    { return true }
+func (t *CronCreateTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	parsed, err := parseCronCreateInput(raw)
 	if err != nil {
 		return nil, err
@@ -59,25 +108,26 @@ func (t CronCreateTool) Validate(raw map[string]interface{}) (map[string]interfa
 	}
 	return parsed.mapValue(), nil
 }
-func (t CronCreateTool) Summarize(input map[string]interface{}) string {
+func (t *CronCreateTool) Summarize(input map[string]interface{}) string {
 	in := cronCreateInputFrom(input)
 	return fmt.Sprintf("Cron job: %s", truncate(in.Prompt, 60))
 }
-func (t CronCreateTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+func (t *CronCreateTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
 	in := cronCreateInputFrom(input)
+	manager := t.manager()
 
 	fields, err := parseCronFields(in.Expression)
 	if err != nil {
 		return core.ToolResult{Content: "CronCreate error: " + err.Error(), Summary: t.Summarize(input), IsError: true}, nil
 	}
 
-	cronRegistry.Lock()
-	cronRegistry.seq++
-	id := fmt.Sprintf("cron-%d", cronRegistry.seq)
+	manager.mu.Lock()
+	manager.seq++
+	id := fmt.Sprintf("cron-%d", manager.seq)
 
 	sessionID := ctx.SessionID
 	store := ctx.SessionStore
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(manager.ctx)
 	now := time.Now()
 	nextFire := nextCronTime(fields, now)
 
@@ -88,10 +138,10 @@ func (t CronCreateTool) Execute(input map[string]interface{}, ctx core.ToolConte
 		NextFire:   nextFire,
 		cancel:     cancel,
 	}
-	cronRegistry.jobs[id] = job
-	cronRegistry.Unlock()
+	manager.jobs[id] = job
+	manager.mu.Unlock()
 
-	go runCronLoop(runCtx, id, in.Expression, in.Prompt, fields, nextFire, sessionID, store)
+	go manager.runCronLoop(runCtx, id, in.Prompt, fields, nextFire, sessionID, store, ctx.Principal)
 
 	var nextStr string
 	if nextFire.IsZero() {
@@ -107,51 +157,48 @@ func (t CronCreateTool) Execute(input map[string]interface{}, ctx core.ToolConte
 
 // ─── CronList Tool ────────────────────────────────────────────────────────
 
-type CronListTool struct{}
-
-func (CronListTool) Name() string { return "CronList" }
-func (CronListTool) Description() string {
+func (*CronListTool) Name() string { return "CronList" }
+func (*CronListTool) Description() string {
 	return "List all scheduled cron jobs with their IDs, expressions, prompts, and next-fire times."
 }
-func (CronListTool) InputSchema() map[string]interface{} {
+func (*CronListTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
 	}
 }
-func (CronListTool) Scope() core.ToolScope { return core.ToolScopeRead }
-func (CronListTool) ParallelSafe() bool    { return true }
-func (t CronListTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (*CronListTool) Scope() core.ToolScope { return core.ToolScopeRead }
+func (*CronListTool) ParallelSafe() bool    { return true }
+func (t *CronListTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	return map[string]interface{}{}, nil
 }
-func (t CronListTool) Summarize(input map[string]interface{}) string { return "Cron job list" }
-func (t CronListTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
-	cronRegistry.RLock()
-	defer cronRegistry.RUnlock()
+func (t *CronListTool) Summarize(input map[string]interface{}) string { return "Cron job list" }
+func (t *CronListTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+	manager := t.manager()
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
 
-	if len(cronRegistry.jobs) == 0 {
+	if len(manager.jobs) == 0 {
 		return core.ToolResult{Content: "No scheduled cron jobs.", Summary: "0 cron job(s)"}, nil
 	}
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("%-12s %-22s %s\n", "ID", "EXPRESSION", "PROMPT"))
 	b.WriteString(strings.Repeat("-", 80) + "\n")
-	for _, j := range cronRegistry.jobs {
+	for _, j := range manager.jobs {
 		nextFire := j.NextFire.Format("2006-01-02 15:04")
 		b.WriteString(fmt.Sprintf("%-12s %-22s %s (next: %s)\n", j.ID, j.Expression, truncate(j.Prompt, 40), nextFire))
 	}
-	return core.ToolResult{Content: b.String(), Summary: fmt.Sprintf("%d cron job(s)", len(cronRegistry.jobs))}, nil
+	return core.ToolResult{Content: b.String(), Summary: fmt.Sprintf("%d cron job(s)", len(manager.jobs))}, nil
 }
 
 // ─── CronDelete Tool ──────────────────────────────────────────────────────
 
-type CronDeleteTool struct{}
-
-func (CronDeleteTool) Name() string { return "CronDelete" }
-func (CronDeleteTool) Description() string {
+func (*CronDeleteTool) Name() string { return "CronDelete" }
+func (*CronDeleteTool) Description() string {
 	return "Delete a scheduled cron job by ID. The job will not fire after deletion."
 }
-func (CronDeleteTool) InputSchema() map[string]interface{} {
+func (*CronDeleteTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -160,28 +207,29 @@ func (CronDeleteTool) InputSchema() map[string]interface{} {
 		"required": []string{"id"},
 	}
 }
-func (CronDeleteTool) Scope() core.ToolScope { return core.ToolScopeWrite }
-func (CronDeleteTool) ParallelSafe() bool    { return true }
-func (t CronDeleteTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (*CronDeleteTool) Scope() core.ToolScope { return core.ToolScopeWrite }
+func (*CronDeleteTool) ParallelSafe() bool    { return true }
+func (t *CronDeleteTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	parsed, err := parseCronDeleteInput(raw)
 	if err != nil {
 		return nil, err
 	}
 	return parsed.mapValue(), nil
 }
-func (t CronDeleteTool) Summarize(input map[string]interface{}) string {
+func (t *CronDeleteTool) Summarize(input map[string]interface{}) string {
 	in := cronDeleteInputFrom(input)
 	return fmt.Sprintf("Cron delete %s", in.ID)
 }
-func (t CronDeleteTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+func (t *CronDeleteTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
 	in := cronDeleteInputFrom(input)
+	manager := t.manager()
 
-	cronRegistry.Lock()
-	job, ok := cronRegistry.jobs[in.ID]
+	manager.mu.Lock()
+	job, ok := manager.jobs[in.ID]
 	if ok {
-		delete(cronRegistry.jobs, in.ID)
+		delete(manager.jobs, in.ID)
 	}
-	cronRegistry.Unlock()
+	manager.mu.Unlock()
 
 	if !ok {
 		return core.ToolResult{Content: fmt.Sprintf("Cron job %q not found.", in.ID), Summary: t.Summarize(input), IsError: true}, nil
@@ -193,7 +241,7 @@ func (t CronDeleteTool) Execute(input map[string]interface{}, ctx core.ToolConte
 
 // ─── Cron Loop ────────────────────────────────────────────────────────────
 
-func runCronLoop(ctx context.Context, id, expression, prompt string, fields cronFields, nextFire time.Time, sessionID string, store core.SessionStore) {
+func (m *CronManager) runCronLoop(ctx context.Context, id, prompt string, fields cronFields, nextFire time.Time, sessionID string, store core.SessionStore, principal core.Principal) {
 	if nextFire.IsZero() {
 		return
 	}
@@ -213,9 +261,9 @@ func runCronLoop(ctx context.Context, id, expression, prompt string, fields cron
 		}
 
 		// Check if still registered
-		cronRegistry.RLock()
-		_, stillExists := cronRegistry.jobs[id]
-		cronRegistry.RUnlock()
+		m.mu.RLock()
+		_, stillExists := m.jobs[id]
+		m.mu.RUnlock()
 		if !stillExists {
 			return
 		}
@@ -228,7 +276,8 @@ func runCronLoop(ctx context.Context, id, expression, prompt string, fields cron
 					{Type: core.BlockText, Text: prompt},
 				},
 			}
-			if _, err := store.AppendMessages(context.Background(), sessionID, []core.Message{msg}); err != nil {
+			storeCtx := core.WithPrincipal(ctx, principal)
+			if _, err := store.AppendMessages(storeCtx, sessionID, []core.Message{msg}); err != nil {
 				// If we can't append, the store might be gone — stop
 				return
 			}
@@ -237,11 +286,11 @@ func runCronLoop(ctx context.Context, id, expression, prompt string, fields cron
 		// Compute next fire time
 		next := nextCronTime(fields, time.Now())
 
-		cronRegistry.Lock()
-		if job, ok := cronRegistry.jobs[id]; ok {
+		m.mu.Lock()
+		if job, ok := m.jobs[id]; ok {
 			job.NextFire = next
 		}
-		cronRegistry.Unlock()
+		m.mu.Unlock()
 
 		if next.IsZero() {
 			return
@@ -249,6 +298,24 @@ func runCronLoop(ctx context.Context, id, expression, prompt string, fields cron
 		nextFire = next
 	}
 }
+
+func (m *CronManager) Close() error {
+	if m == nil {
+		return nil
+	}
+	m.cancel()
+	m.mu.Lock()
+	for id, job := range m.jobs {
+		job.cancel()
+		delete(m.jobs, id)
+	}
+	m.mu.Unlock()
+	return nil
+}
+
+func (t *CronCreateTool) Close() error { return t.manager().Close() }
+func (t *CronListTool) Close() error   { return t.manager().Close() }
+func (t *CronDeleteTool) Close() error { return t.manager().Close() }
 
 // ─── Cron Parser ──────────────────────────────────────────────────────────
 

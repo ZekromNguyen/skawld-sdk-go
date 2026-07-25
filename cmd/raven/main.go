@@ -27,6 +27,7 @@ import (
 	"github.com/ZekromNguyen/skawld-sdk-go"
 	"github.com/ZekromNguyen/skawld-sdk-go/cmd/raven/internal/tui"
 	"github.com/ZekromNguyen/skawld-sdk-go/config"
+	"github.com/ZekromNguyen/skawld-sdk-go/permissions"
 	"github.com/ZekromNguyen/skawld-sdk-go/providers"
 	"github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
@@ -110,7 +111,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	opts, err := buildAgentOptions(cfg)
+	permissionBroker := newPermissionBroker(*flagPrompt == "")
+	opts, err := buildAgentOptions(cfg, permissionBroker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent: %v\n", err)
 		os.Exit(1)
@@ -274,7 +276,7 @@ loop:
 			}
 
 			// Start a run — wrap in permission-aware handler
-			runPromptInteractive(agent, session, input, screen, renderer, &permDialog, inputReader)
+			runPromptInteractive(agent, session, input, screen, renderer, &permDialog, inputReader, permissionBroker)
 
 		case modePalette:
 			key, err := inputReader.ReadKey()
@@ -451,7 +453,7 @@ func readKeyString(reader *tui.InputReader) string {
 
 // runPromptInteractive runs a prompt with inline permission dialog support.
 // When the SDK requests permissions mid-stream, it pauses to show the dialog.
-func runPromptInteractive(agent *skawld.Agent, session *skawld.Session, prompt string, screen *tui.Screen, renderer *tui.Renderer, permDialog *tui.PermissionDialog, inputReader *tui.InputReader) {
+func runPromptInteractive(agent *skawld.Agent, session *skawld.Session, prompt string, screen *tui.Screen, renderer *tui.Renderer, permDialog *tui.PermissionDialog, inputReader *tui.InputReader, broker *permissionBroker) {
 	ctx := context.Background()
 	handle := session.StartRun(ctx, prompt, skawld.RunOptions{})
 	defer handle.Close()
@@ -459,78 +461,82 @@ func runPromptInteractive(agent *skawld.Agent, session *skawld.Session, prompt s
 	for ev := range handle.Events() {
 		// Check if this is a permission request — intercept for interactive dialog
 		if ev.Type == skawld.EventPermissionRequest && len(ev.Requests) > 0 {
-			req := ev.Requests[0]
-			permReq := &tui.PermissionRequest{
-				ToolName: req.ToolName,
-				Summary:  req.Summary,
-				FilePath: extractFilePath(req.ToolName, req.Input),
-				Command:  extractCommand(req.ToolName, req.Input),
-			}
-
-			// Try to compute a diff preview for Edit/Write
-			if req.ToolName == "Edit" {
-				if oldStr, ok := req.Input["old_string"].(string); ok {
-					newStr, _ := req.Input["new_string"].(string)
-					permReq.Edits = tui.ComputeSimpleDiff(oldStr, newStr)
+			for _, req := range ev.Requests {
+				permReq := &tui.PermissionRequest{
+					ToolName: req.ToolName,
+					Summary:  req.Summary,
+					FilePath: extractFilePath(req.ToolName, req.Input),
+					Command:  extractCommand(req.ToolName, req.Input),
 				}
-			} else if req.ToolName == "Write" {
-				if content, ok := req.Input["content"].(string); ok {
-					permReq.Edits = contentPreview(content)
-				}
-			}
 
-			// Render permission dialog
-			permDialog.Width = screen.Width
-			permDialog.Height = screen.Height
-			permDialog.Theme = renderer.Theme
-
-			buf := tui.NewBuffer(screen.Width, screen.Height)
-			permDialog.RenderPermission(buf, *permReq)
-			buf.FullRender(screen)
-
-			// Wait for user decision
-			for {
-				rawKey := readKeyString(inputReader)
-				choice, ok := tui.ParsePermissionChoice(rawKey)
-				if !ok {
-					continue
-				}
-				switch choice {
-				case tui.PermAllowOnce:
-					// Allow this one — send event back through renderer and continue
-					renderer.HandleEvent(ev)
-					goto donePermission
-				case tui.PermAllowAll:
-					// Allow all: render once, then let subsequent pass through
-					renderer.HandleEvent(ev)
-					goto donePermission
-				case tui.PermDeny:
-					// Skip this event, don't render
-					goto donePermission
-				case tui.PermShowDiff:
-					// Show diff and re-prompt
-					if permReq.Edits == "" {
-						oldStr, _ := req.Input["old_string"].(string)
+				// Try to compute a diff preview for Edit/Write
+				if req.ToolName == "Edit" {
+					if oldStr, ok := req.Input["old_string"].(string); ok {
 						newStr, _ := req.Input["new_string"].(string)
-						if req.ToolName == "Edit" {
-							permReq.Edits = tui.ComputeSimpleDiff(oldStr, newStr)
-						} else if req.ToolName == "Write" {
-							if content, ok := req.Input["content"].(string); ok {
-								permReq.Edits = contentPreview(content)
-							}
-						} else if req.ToolName == "Bash" {
-							if cmd, ok := req.Input["command"].(string); ok {
-								permReq.Edits = "Command: " + cmd
+						permReq.Edits = tui.ComputeSimpleDiff(oldStr, newStr)
+					}
+				} else if req.ToolName == "Write" {
+					if content, ok := req.Input["content"].(string); ok {
+						permReq.Edits = contentPreview(content)
+					}
+				}
+
+				// Render permission dialog
+				permDialog.Width = screen.Width
+				permDialog.Height = screen.Height
+				permDialog.Theme = renderer.Theme
+
+				buf := tui.NewBuffer(screen.Width, screen.Height)
+				permDialog.RenderPermission(buf, *permReq)
+				buf.FullRender(screen)
+
+				// Wait for user decision
+				for {
+					rawKey := readKeyString(inputReader)
+					choice, ok := tui.ParsePermissionChoice(rawKey)
+					if !ok {
+						if rawKey == "" {
+							broker.Resolve(req.ToolUseID, permissions.CanUseToolResponse{Behavior: "deny", Message: "permission input closed"})
+							break
+						}
+						continue
+					}
+					switch choice {
+					case tui.PermAllowOnce:
+						broker.Resolve(req.ToolUseID, permissions.CanUseToolResponse{Behavior: "allow"})
+						goto nextPermission
+					case tui.PermAllowAll:
+						broker.EnableEdits()
+						broker.Resolve(req.ToolUseID, permissions.CanUseToolResponse{Behavior: "allow"})
+						goto nextPermission
+					case tui.PermDeny:
+						broker.Resolve(req.ToolUseID, permissions.CanUseToolResponse{Behavior: "deny", Message: "denied by user"})
+						goto nextPermission
+					case tui.PermShowDiff:
+						// Show diff and re-prompt
+						if permReq.Edits == "" {
+							oldStr, _ := req.Input["old_string"].(string)
+							newStr, _ := req.Input["new_string"].(string)
+							if req.ToolName == "Edit" {
+								permReq.Edits = tui.ComputeSimpleDiff(oldStr, newStr)
+							} else if req.ToolName == "Write" {
+								if content, ok := req.Input["content"].(string); ok {
+									permReq.Edits = contentPreview(content)
+								}
+							} else if req.ToolName == "Bash" {
+								if cmd, ok := req.Input["command"].(string); ok {
+									permReq.Edits = "Command: " + cmd
+								}
 							}
 						}
+						buf := tui.NewBuffer(screen.Width, screen.Height)
+						permDialog.RenderPermission(buf, *permReq)
+						buf.FullRender(screen)
 					}
-					buf := tui.NewBuffer(screen.Width, screen.Height)
-					permDialog.RenderPermission(buf, *permReq)
-					buf.FullRender(screen)
-					// Loop back to wait for decision
 				}
+			nextPermission:
 			}
-		donePermission:
+			renderer.HandleEvent(ev)
 			continue
 		}
 		renderer.HandleEvent(ev)
@@ -795,9 +801,10 @@ func loadConfig() (config.File, error) {
 	return cfg, nil
 }
 
-func buildAgentOptions(cfg config.File) (skawld.AgentOptions, error) {
+func buildAgentOptions(cfg config.File, broker *permissionBroker) (skawld.AgentOptions, error) {
 	opts := skawld.AgentOptions{
 		Tools:                  tools.DefaultTools(),
+		CloseTools:             true,
 		IncludePartialMessages: true,
 	}
 
@@ -863,6 +870,9 @@ func buildAgentOptions(cfg config.File) (skawld.AgentOptions, error) {
 		mode = skawld.PermissionModeDefault
 	}
 	opts.Permissions = skawld.PermissionOptions{Mode: skawld.PermissionMode(mode)}
+	if broker != nil {
+		opts.Permissions.CanUseTool = broker.CanUseTool
+	}
 
 	return opts, nil
 }

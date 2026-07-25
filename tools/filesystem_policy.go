@@ -10,24 +10,26 @@ import (
 )
 
 // FilesystemPolicy constrains built-in filesystem tools to approved roots.
-// With no Roots, relative and absolute path handling is compatible with the
-// historical unrestricted behavior. When Roots is set, absolute paths are
+// With no Roots, access is restricted to cwd. Set Unrestricted explicitly for
+// the historical unrestricted behavior. When Roots is set, absolute paths are
 // allowed only when they resolve inside one of the configured roots. When
-// FollowSymlinks is true, roots and requested paths are checked after symlink
-// evaluation so symlink escapes are rejected; when false, the link path itself
-// is checked.
+// Roots and requested paths are checked after symlink evaluation so symlink
+// escapes are rejected. AllowSymlinkEscape exists only for compatibility and
+// should not be enabled for model-callable tools.
 type FilesystemPolicy struct {
-	Roots          []string
-	FollowSymlinks bool
+	Roots              []string
+	FollowSymlinks     bool // Deprecated: secure resolution is now the default.
+	AllowSymlinkEscape bool
+	Unrestricted       bool
 }
 
 func (p FilesystemPolicy) Resolve(cwd, raw string, mode core.FilesystemResolveMode) (string, error) {
 	abs := resolvePath(raw, cwd)
-	if len(p.Roots) == 0 {
+	if p.Unrestricted {
 		return abs, nil
 	}
 	checked := abs
-	if p.FollowSymlinks {
+	if !p.AllowSymlinkEscape {
 		resolved, err := evalPathForPolicy(abs, mode)
 		if err != nil {
 			return "", err
@@ -38,9 +40,6 @@ func (p FilesystemPolicy) Resolve(cwd, raw string, mode core.FilesystemResolveMo
 	if err != nil {
 		return "", err
 	}
-	if len(roots) == 0 {
-		return abs, nil
-	}
 	if withinAnyRoot(checked, roots) {
 		return abs, nil
 	}
@@ -48,6 +47,9 @@ func (p FilesystemPolicy) Resolve(cwd, raw string, mode core.FilesystemResolveMo
 }
 
 func (p FilesystemPolicy) normalizedRoots(cwd string) ([]string, error) {
+	if len(p.Roots) == 0 {
+		p.Roots = []string{cwd}
+	}
 	roots := make([]string, 0, len(p.Roots))
 	for _, root := range p.Roots {
 		root = strings.TrimSpace(root)
@@ -55,7 +57,7 @@ func (p FilesystemPolicy) normalizedRoots(cwd string) ([]string, error) {
 			continue
 		}
 		abs := resolvePath(root, cwd)
-		if p.FollowSymlinks {
+		if !p.AllowSymlinkEscape {
 			resolved, err := filepath.EvalSymlinks(abs)
 			if err != nil {
 				return nil, fmt.Errorf("resolve filesystem root %q: %w", root, err)
@@ -71,7 +73,7 @@ func resolveFilesystem(ctx core.ToolContext, raw string, mode core.FilesystemRes
 	if ctx.Filesystem != nil {
 		return ctx.Filesystem.Resolve(ctx.CWD, raw, mode)
 	}
-	return resolvePath(raw, ctx.CWD), nil
+	return (FilesystemPolicy{}).Resolve(ctx.CWD, raw, mode)
 }
 
 func evalPathForPolicy(abs string, mode core.FilesystemResolveMode) (string, error) {

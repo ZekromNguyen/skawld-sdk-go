@@ -27,6 +27,9 @@ type File struct {
 	MCPServers      []mcp.ServerConfig  `json:"mcp_servers,omitempty"`
 	OpenAI          ProviderConfig      `json:"openai,omitempty"`
 	Anthropic       ProviderConfig      `json:"anthropic,omitempty"`
+	// ProviderOptions is passed through for custom ProviderFactory
+	// implementations. The SDK does not interpret these values.
+	ProviderOptions map[string]interface{} `json:"provider_options,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -117,11 +120,6 @@ func LoadAgentOptionsWithFactory(ctx context.Context, opts LoadOptions, factory 
 func (c File) Validate() error {
 	if strings.TrimSpace(c.Provider) == "" {
 		return core.NewConfigError("config provider is required")
-	}
-	switch c.Provider {
-	case "openai-responses", "openai-chat", "anthropic":
-	default:
-		return core.NewConfigError(fmt.Sprintf("unsupported provider %q", c.Provider))
 	}
 	if c.Model == "" {
 		return core.NewConfigError("config model is required")

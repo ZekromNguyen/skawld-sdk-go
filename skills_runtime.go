@@ -59,20 +59,6 @@ func (s *Session) clearActiveSkillOverlay() {
 	s.activeSkillOverlay = nil
 }
 
-func (s *Session) skillAllowsTool(name string) bool {
-	s.skillMu.Lock()
-	defer s.skillMu.Unlock()
-	if s.activeSkillOverlay == nil {
-		return false
-	}
-	for _, allowed := range s.activeSkillOverlay.AllowedTools {
-		if allowed == "*" || allowed == name {
-			return true
-		}
-	}
-	return false
-}
-
 func cloneSkillOverlay(in *skillOverlay) *skillOverlay {
 	if in == nil {
 		return nil
@@ -89,7 +75,7 @@ func skillOverlaySystemText(overlay *skillOverlay) string {
 	b.WriteString("\n\n")
 	b.WriteString(overlay.Body)
 	if len(overlay.AllowedTools) > 0 {
-		b.WriteString("\n\nAllowed tools added for this turn: ")
+		b.WriteString("\n\nTools visible for this turn (normal permission policy still applies): ")
 		b.WriteString(strings.Join(overlay.AllowedTools, ", "))
 	}
 	return b.String()

@@ -32,4 +32,3 @@ func taskKillTree(pid int) {
 	}
 	_ = exec.Command("taskkill", "/pid", fmt.Sprint(pid), "/T", "/F").Run()
 }
-

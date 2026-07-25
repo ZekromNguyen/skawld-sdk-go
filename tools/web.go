@@ -92,7 +92,10 @@ func (t WebSearchTool) Summarize(input map[string]interface{}) string {
 // ─── WebFetch Tool ───────────────────────────────────────────────────────
 
 // WebFetchTool fetches content from a URL and returns the extracted text.
-type WebFetchTool struct{}
+type WebFetchTool struct {
+	HTTPClient    *http.Client
+	NetworkPolicy NetworkPolicy
+}
 
 func (WebFetchTool) Name() string { return "WebFetch" }
 func (WebFetchTool) Description() string {
@@ -123,7 +126,8 @@ func (t WebFetchTool) Validate(raw map[string]interface{}) (map[string]interface
 	if u == "" {
 		return nil, core.NewToolExecutionError("WebFetch", "url is required")
 	}
-	if _, err := url.Parse(u); err != nil {
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return nil, core.NewToolExecutionError("WebFetch", fmt.Sprintf("invalid URL: %v", err))
 	}
 	maxLen := asInt(raw["max_length"], 5000)
@@ -140,7 +144,10 @@ func (t WebFetchTool) Execute(input map[string]interface{}, ctx core.ToolContext
 	u, _ := input["url"].(string)
 	maxLen := asInt(input["max_length"], 5000)
 
-	content, err := fetchURL(ctx.Context, u, maxLen)
+	if _, err := t.NetworkPolicy.ValidateURL(ctx.Context, u); err != nil {
+		return core.ToolResult{Content: fmt.Sprintf("WebFetch denied: %v", err), IsError: true}, nil
+	}
+	content, err := fetchURL(ctx.Context, safeHTTPClient(t.HTTPClient, t.NetworkPolicy), u, maxLen)
 	if err != nil {
 		return core.ToolResult{Content: fmt.Sprintf("WebFetch error: %v", err), IsError: true}, nil
 	}
@@ -241,14 +248,14 @@ func parseDDGResults(html string, limit int) []SearchResult {
 }
 
 // fetchURL retrieves and extracts text content from a URL.
-func fetchURL(ctx context.Context, u string, maxLen int) (string, error) {
+func fetchURL(ctx context.Context, client *http.Client, u string, maxLen int) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Raven/1.0)")
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch: %w", err)
 	}

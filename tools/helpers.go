@@ -364,4 +364,3 @@ func terminateProcessTree(cmd *exec.Cmd, done <-chan error, grace time.Duration)
 		return fmt.Errorf("process %d did not terminate after kill", cmd.Process.Pid)
 	}
 }
-

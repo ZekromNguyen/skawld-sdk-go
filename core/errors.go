@@ -18,6 +18,13 @@ const (
 	ErrorConfig           ErrorKind = "config"
 	ErrorSkill            ErrorKind = "skill"
 	ErrorSubagent         ErrorKind = "subagent"
+	ErrorValidation       ErrorKind = "validation"
+	ErrorWorkflow         ErrorKind = "workflow"
+	ErrorPolicy           ErrorKind = "policy"
+	ErrorApproval         ErrorKind = "approval"
+	ErrorTimeout          ErrorKind = "timeout"
+	ErrorConflict         ErrorKind = "conflict"
+	ErrorNotFound         ErrorKind = "not_found"
 )
 
 type SkawldError struct {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestProcessToolValidate(t *testing.T) {
-	tool := ProcessTool{}
+	tool := NewProcessTool()
 
 	// Missing action
 	_, err := tool.Validate(map[string]interface{}{})
@@ -53,7 +53,7 @@ func TestProcessToolValidate(t *testing.T) {
 }
 
 func TestProcessSummarize(t *testing.T) {
-	tool := ProcessTool{}
+	tool := NewProcessTool()
 
 	tests := []struct {
 		input  map[string]interface{}
@@ -73,13 +73,7 @@ func TestProcessSummarize(t *testing.T) {
 }
 
 func TestListEmptyProcesses(t *testing.T) {
-	// Reset registry for clean test
-	processRegistry.Lock()
-	processRegistry.procs = make(map[string]*ProcessRecord)
-	processRegistry.seq = 0
-	processRegistry.Unlock()
-
-	tool := ProcessTool{}
+	tool := NewProcessTool()
 	result, err := tool.Execute(map[string]interface{}{"action": "list"}, core.ToolContext{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

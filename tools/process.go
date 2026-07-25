@@ -24,24 +24,45 @@ type ProcessRecord struct {
 	ExitCode  int
 	Output    string
 	cmd       *exec.Cmd
+	done      chan error
 	mu        sync.Mutex
 }
 
-// processRegistry manages background processes across tool calls.
-var processRegistry = struct {
-	sync.RWMutex
-	procs map[string]*ProcessRecord
-	seq   int
-}{procs: make(map[string]*ProcessRecord)}
+type ProcessManager struct {
+	mu     sync.RWMutex
+	procs  map[string]*ProcessRecord
+	seq    int
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func NewProcessManager() *ProcessManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &ProcessManager{procs: make(map[string]*ProcessRecord), ctx: ctx, cancel: cancel}
+}
 
 // ProcessTool manages background processes: list, poll, log, kill.
-type ProcessTool struct{}
+type ProcessTool struct {
+	Manager *ProcessManager
+	once    sync.Once
+}
 
-func (ProcessTool) Name() string { return "Process" }
-func (ProcessTool) Description() string {
+func NewProcessTool() *ProcessTool { return &ProcessTool{Manager: NewProcessManager()} }
+
+func (t *ProcessTool) manager() *ProcessManager {
+	t.once.Do(func() {
+		if t.Manager == nil {
+			t.Manager = NewProcessManager()
+		}
+	})
+	return t.Manager
+}
+
+func (*ProcessTool) Name() string { return "Process" }
+func (*ProcessTool) Description() string {
 	return "Manage background processes. Actions: list (show all processes), poll (check status of one), logs (get output of one), kill (terminate one)."
 }
-func (ProcessTool) InputSchema() map[string]interface{} {
+func (*ProcessTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -66,10 +87,10 @@ func (ProcessTool) InputSchema() map[string]interface{} {
 		"required": []string{"action"},
 	}
 }
-func (ProcessTool) Scope() core.ToolScope { return core.ToolScopeExec }
-func (ProcessTool) ParallelSafe() bool    { return true }
+func (*ProcessTool) Scope() core.ToolScope { return core.ToolScopeExec }
+func (*ProcessTool) ParallelSafe() bool    { return true }
 
-func (t ProcessTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (t *ProcessTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	action, _ := asString(raw["action"])
 	if action == "" {
 		return nil, core.NewToolExecutionError("Process", "action is required")
@@ -99,7 +120,8 @@ func (t ProcessTool) Validate(raw map[string]interface{}) (map[string]interface{
 	}, nil
 }
 
-func (t ProcessTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+func (t *ProcessTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+	manager := t.manager()
 	action, _ := input["action"].(string)
 	pid, _ := input["pid"].(string)
 	command, _ := input["command"].(string)
@@ -107,21 +129,21 @@ func (t ProcessTool) Execute(input map[string]interface{}, ctx core.ToolContext)
 
 	switch action {
 	case "list":
-		return listProcesses()
+		return manager.listProcesses()
 	case "poll":
-		return pollProcess(pid)
+		return manager.pollProcess(pid)
 	case "logs":
-		return getProcessLogs(pid)
+		return manager.getProcessLogs(pid)
 	case "kill":
-		return killProcess(pid)
+		return manager.killProcess(pid)
 	case "spawn":
-		return spawnProcess(ctx.Context, command, description)
+		return manager.spawnProcess(command, description, ctx.CWD)
 	default:
 		return core.ToolResult{Content: fmt.Sprintf("Unknown action: %s", action), IsError: true}, nil
 	}
 }
 
-func (t ProcessTool) Summarize(input map[string]interface{}) string {
+func (t *ProcessTool) Summarize(input map[string]interface{}) string {
 	action, _ := input["action"].(string)
 	pid, _ := input["pid"].(string)
 	switch action {
@@ -140,11 +162,11 @@ func (t ProcessTool) Summarize(input map[string]interface{}) string {
 	}
 }
 
-func listProcesses() (core.ToolResult, error) {
-	processRegistry.RLock()
-	defer processRegistry.RUnlock()
+func (m *ProcessManager) listProcesses() (core.ToolResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	if len(processRegistry.procs) == 0 {
+	if len(m.procs) == 0 {
 		return core.ToolResult{Content: "No background processes.", Summary: "Process list: 0"}, nil
 	}
 
@@ -152,7 +174,7 @@ func listProcesses() (core.ToolResult, error) {
 	sb.WriteString(fmt.Sprintf("%-8s %-8s %-30s %s\n", "ID", "STATUS", "COMMAND", "AGE"))
 	sb.WriteString(strings.Repeat("-", 70) + "\n")
 
-	for _, p := range processRegistry.procs {
+	for _, p := range m.procs {
 		p.mu.Lock()
 		status := p.Status
 		cmd := truncate(p.Command, 30)
@@ -161,17 +183,17 @@ func listProcesses() (core.ToolResult, error) {
 		sb.WriteString(fmt.Sprintf("%-8s %-8s %-30s %s\n", p.ID, status, cmd, age))
 	}
 
-	count := len(processRegistry.procs)
+	count := len(m.procs)
 	return core.ToolResult{
 		Content: sb.String(),
 		Summary: fmt.Sprintf("Process list: %d running", count),
 	}, nil
 }
 
-func pollProcess(pid string) (core.ToolResult, error) {
-	processRegistry.RLock()
-	p, ok := processRegistry.procs[pid]
-	processRegistry.RUnlock()
+func (m *ProcessManager) pollProcess(pid string) (core.ToolResult, error) {
+	m.mu.RLock()
+	p, ok := m.procs[pid]
+	m.mu.RUnlock()
 
 	if !ok {
 		return core.ToolResult{Content: fmt.Sprintf("Process %s not found.", pid), IsError: true}, nil
@@ -188,10 +210,10 @@ func pollProcess(pid string) (core.ToolResult, error) {
 	}, nil
 }
 
-func getProcessLogs(pid string) (core.ToolResult, error) {
-	processRegistry.RLock()
-	p, ok := processRegistry.procs[pid]
-	processRegistry.RUnlock()
+func (m *ProcessManager) getProcessLogs(pid string) (core.ToolResult, error) {
+	m.mu.RLock()
+	p, ok := m.procs[pid]
+	m.mu.RUnlock()
 
 	if !ok {
 		return core.ToolResult{Content: fmt.Sprintf("Process %s not found.", pid), IsError: true}, nil
@@ -211,19 +233,19 @@ func getProcessLogs(pid string) (core.ToolResult, error) {
 	}, nil
 }
 
-func killProcess(pid string) (core.ToolResult, error) {
-	processRegistry.Lock()
-	p, ok := processRegistry.procs[pid]
+func (m *ProcessManager) killProcess(pid string) (core.ToolResult, error) {
+	m.mu.Lock()
+	p, ok := m.procs[pid]
 	if !ok {
-		processRegistry.Unlock()
+		m.mu.Unlock()
 		return core.ToolResult{Content: fmt.Sprintf("Process %s not found.", pid), IsError: true}, nil
 	}
-	delete(processRegistry.procs, pid)
-	processRegistry.Unlock()
+	delete(m.procs, pid)
+	m.mu.Unlock()
 
 	p.mu.Lock()
 	if p.cmd != nil && p.cmd.Process != nil {
-		p.cmd.Process.Kill()
+		taskKillTree(p.cmd.Process.Pid)
 	}
 	p.Status = "killed"
 	p.cmd = nil
@@ -235,20 +257,23 @@ func killProcess(pid string) (core.ToolResult, error) {
 	}, nil
 }
 
-func spawnProcess(ctx context.Context, command string, description string) (core.ToolResult, error) {
-	processRegistry.Lock()
-	processRegistry.seq++
-	id := fmt.Sprintf("bg-%d", processRegistry.seq)
-	processRegistry.Unlock()
+func (m *ProcessManager) spawnProcess(command string, description string, cwd string) (core.ToolResult, error) {
+	m.mu.Lock()
+	m.seq++
+	id := fmt.Sprintf("bg-%d", m.seq)
+	m.mu.Unlock()
 
 	p := &ProcessRecord{
 		ID:        id,
 		Command:   command,
 		Status:    "running",
 		StartedAt: time.Now(),
+		done:      make(chan error, 1),
 	}
 
-	p.cmd = exec.CommandContext(context.Background(), "sh", "-c", command)
+	p.cmd = exec.CommandContext(m.ctx, "sh", "-c", command)
+	p.cmd.Dir = cwd
+	setupProcessOptions(p.cmd)
 	p.cmd.Stdout = &processWriter{p: p}
 	p.cmd.Stderr = &processWriter{p: p}
 
@@ -262,13 +287,15 @@ func spawnProcess(ctx context.Context, command string, description string) (core
 
 	p.PID = p.cmd.Process.Pid
 
-	processRegistry.Lock()
-	processRegistry.procs[id] = p
-	processRegistry.Unlock()
+	m.mu.Lock()
+	m.procs[id] = p
+	m.mu.Unlock()
 
 	// Wait for completion in background goroutine
 	go func() {
 		err := p.cmd.Wait()
+		p.done <- err
+		close(p.done)
 		p.mu.Lock()
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -292,6 +319,32 @@ func spawnProcess(ctx context.Context, command string, description string) (core
 			id, p.PID, command),
 		Summary: fmt.Sprintf("Process spawned: %s (%s)", id, truncate(description, 40)),
 	}, nil
+}
+
+func (m *ProcessManager) Close() error {
+	if m == nil {
+		return nil
+	}
+	m.cancel()
+	m.mu.Lock()
+	processes := make([]*ProcessRecord, 0, len(m.procs))
+	for _, process := range m.procs {
+		processes = append(processes, process)
+	}
+	m.procs = make(map[string]*ProcessRecord)
+	m.mu.Unlock()
+	for _, process := range processes {
+		process.mu.Lock()
+		if process.cmd != nil && process.cmd.Process != nil {
+			taskKillTree(process.cmd.Process.Pid)
+		}
+		process.mu.Unlock()
+	}
+	return nil
+}
+
+func (t *ProcessTool) Close() error {
+	return t.manager().Close()
 }
 
 // processWriter accumulates output from a background process.

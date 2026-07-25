@@ -6,26 +6,31 @@ type ModelID string
 type PermissionMode string
 type StopReason string
 type ToolScope string
+type ContentTrust string
 
 const (
 	PermissionModeDefault     PermissionMode = "default"
 	PermissionModeAcceptEdits PermissionMode = "acceptEdits"
 	PermissionModeYolo        PermissionMode = "yolo"
 
-	StopEndTurn     StopReason = "end_turn"
-	StopToolUse     StopReason = "tool_use"
-	StopMaxTokens   StopReason = "max_tokens"
-	StopSequence    StopReason = "stop_sequence"
-	StopRefusal     StopReason = "refusal"
-	StopError       StopReason = "error"
-	ToolScopeRead   ToolScope  = "read"
-	ToolScopeWrite  ToolScope  = "write"
-	ToolScopeExec   ToolScope  = "exec"
-	BlockText       string     = "text"
-	BlockToolUse    string     = "tool_use"
-	BlockToolResult string     = "tool_result"
-	BlockThinking   string     = "thinking"
-	BlockImage      string     = "image"
+	StopEndTurn           StopReason   = "end_turn"
+	StopToolUse           StopReason   = "tool_use"
+	StopMaxTokens         StopReason   = "max_tokens"
+	StopSequence          StopReason   = "stop_sequence"
+	StopRefusal           StopReason   = "refusal"
+	StopError             StopReason   = "error"
+	ToolScopeRead         ToolScope    = "read"
+	ToolScopeWrite        ToolScope    = "write"
+	ToolScopeExec         ToolScope    = "exec"
+	BlockText             string       = "text"
+	BlockToolUse          string       = "tool_use"
+	BlockToolResult       string       = "tool_result"
+	BlockThinking         string       = "thinking"
+	BlockImage            string       = "image"
+	TrustSystemPolicy     ContentTrust = "system_policy"
+	TrustHumanInstruction ContentTrust = "human_instruction"
+	TrustToolResult       ContentTrust = "tool_result"
+	TrustUntrustedContent ContentTrust = "untrusted_content"
 )
 
 type Usage struct {
@@ -75,6 +80,7 @@ type ContentBlock struct {
 	Thinking  string                 `json:"thinking,omitempty"`
 	Signature string                 `json:"signature,omitempty"`
 	Source    *ImageSource           `json:"source,omitempty"`
+	Trust     ContentTrust           `json:"trust,omitempty"`
 }
 
 type ImageSource struct {
@@ -93,7 +99,7 @@ func ToolUse(id, name string, input map[string]interface{}) ContentBlock {
 }
 
 func ToolResultBlock(toolUseID string, content interface{}, isError bool) ContentBlock {
-	return ContentBlock{Type: BlockToolResult, ToolUseID: toolUseID, Content: content, IsError: isError}
+	return ContentBlock{Type: BlockToolResult, ToolUseID: toolUseID, Content: content, IsError: isError, Trust: TrustToolResult}
 }
 
 func (b ContentBlock) StringContent() string {

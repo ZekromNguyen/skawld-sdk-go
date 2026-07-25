@@ -25,6 +25,8 @@ type Event struct {
 	Subtype        string                 `json:"subtype,omitempty"`
 	SessionID      string                 `json:"session_id,omitempty"`
 	RunID          string                 `json:"run_id,omitempty"`
+	TenantID       string                 `json:"tenant_id,omitempty"`
+	ActorID        string                 `json:"actor_id,omitempty"`
 	Model          ModelID                `json:"model,omitempty"`
 	Tools          []string               `json:"tools,omitempty"`
 	PermissionMode PermissionMode         `json:"permission_mode,omitempty"`
@@ -36,6 +38,7 @@ type Event struct {
 	ToolName       string                 `json:"tool_name,omitempty"`
 	Input          map[string]interface{} `json:"input,omitempty"`
 	IsError        bool                   `json:"is_error,omitempty"`
+	ErrorKind      ErrorKind              `json:"error_kind,omitempty"`
 	DurationMS     int64                  `json:"duration_ms,omitempty"`
 	Requests       []PermissionRequest    `json:"requests,omitempty"`
 	Usage          Usage                  `json:"usage,omitempty"`

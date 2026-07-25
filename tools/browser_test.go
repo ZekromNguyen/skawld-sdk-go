@@ -11,7 +11,7 @@ import (
 )
 
 func TestBrowserToolsValidateAndSummarize(t *testing.T) {
-	nav := BrowserNavigateTool{}
+	nav := &BrowserNavigateTool{}
 	input, err := nav.Validate(map[string]interface{}{"url": "https://example.com", "timeout_ms": 500})
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestBrowserNavigateSnapshotAndVision(t *testing.T) {
 	defer cancel()
 	toolCtx := core.ToolContext{Context: ctx}
 
-	nav := BrowserNavigateTool{}
+	nav := &BrowserNavigateTool{}
 	navInput, err := nav.Validate(map[string]interface{}{
 		"url": "data:text/html,<html><body><main><h1>Browser Test</h1><button>Click Me</button></main></body></html>",
 	})
@@ -47,7 +47,7 @@ func TestBrowserNavigateSnapshotAndVision(t *testing.T) {
 		t.Skipf("headless browser unavailable: %v", res.Content)
 	}
 
-	snapshot := BrowserSnapshotTool{}
+	snapshot := &BrowserSnapshotTool{}
 	snapshotInput, err := snapshot.Validate(map[string]interface{}{"depth": 8})
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestBrowserNavigateSnapshotAndVision(t *testing.T) {
 		t.Fatalf("unexpected snapshot result: %+v", res)
 	}
 
-	vision := BrowserVisionTool{}
+	vision := &BrowserVisionTool{}
 	visionInput, err := vision.Validate(map[string]interface{}{})
 	if err != nil {
 		t.Fatal(err)

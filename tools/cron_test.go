@@ -101,17 +101,10 @@ func TestNextCronTimeNoFutureMatch(t *testing.T) {
 }
 
 func TestCronCreateDeleteAndList(t *testing.T) {
-	// Clear registry
-	cronRegistry.Lock()
-	cronRegistry.jobs = make(map[string]*CronJob)
-	cronRegistry.seq = 0
-	cronRegistry.Unlock()
-
 	store := &testSessionStore{id: "test-session"}
 
-	create := CronCreateTool{}
-	list := CronListTool{}
-	del := CronDeleteTool{}
+	create, list, del := NewCronTools()
+	defer create.Close()
 
 	// Create a cron job
 	input, err := create.Validate(map[string]interface{}{
@@ -181,7 +174,7 @@ func TestCronCreateDeleteAndList(t *testing.T) {
 }
 
 func TestCronCreateInvalidExpression(t *testing.T) {
-	create := CronCreateTool{}
+	create := &CronCreateTool{}
 	_, err := create.Validate(map[string]interface{}{
 		"cron":   "invalid expression here",
 		"prompt": "test",
@@ -192,13 +185,8 @@ func TestCronCreateInvalidExpression(t *testing.T) {
 }
 
 func TestCronParallelSafety(t *testing.T) {
-	// Clear registry
-	cronRegistry.Lock()
-	cronRegistry.jobs = make(map[string]*CronJob)
-	cronRegistry.seq = 0
-	cronRegistry.Unlock()
-
-	create := CronCreateTool{}
+	create, _, _ := NewCronTools()
+	defer create.Close()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -218,21 +206,14 @@ func TestCronParallelSafety(t *testing.T) {
 	}
 	wg.Wait()
 
-	cronRegistry.RLock()
-	count := len(cronRegistry.jobs)
-	cronRegistry.RUnlock()
+	create.Manager.mu.RLock()
+	count := len(create.Manager.jobs)
+	create.Manager.mu.RUnlock()
 
 	if count != 10 {
 		t.Errorf("expected 10 concurrent creates, got %d", count)
 	}
 
-	// Cleanup: cancel all jobs
-	cronRegistry.Lock()
-	for id, job := range cronRegistry.jobs {
-		job.cancel()
-		delete(cronRegistry.jobs, id)
-	}
-	cronRegistry.Unlock()
 }
 
 func TestFormatCronDescription(t *testing.T) {

@@ -10,29 +10,69 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/chromedp"
-	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
-type BrowserNavigateTool struct{}
-type BrowserSnapshotTool struct{}
-type BrowserVisionTool struct{}
+type BrowserSession struct {
+	mu            sync.Mutex
+	NetworkPolicy NetworkPolicy
+	allocCtx      context.Context
+	cancel        context.CancelFunc
+	ctx           context.Context
+	ctxCancel     context.CancelFunc
+	current       string
+}
 
-var browserState = struct {
-	sync.Mutex
-	allocCtx  context.Context
-	cancel    context.CancelFunc
-	ctx       context.Context
-	ctxCancel context.CancelFunc
-	current   string
-}{}
+type BrowserNavigateTool struct {
+	Session *BrowserSession
+	once    sync.Once
+}
+type BrowserSnapshotTool struct {
+	Session *BrowserSession
+	once    sync.Once
+}
+type BrowserVisionTool struct {
+	Session *BrowserSession
+	once    sync.Once
+}
 
-func (BrowserNavigateTool) Name() string { return "BrowserNavigate" }
-func (BrowserNavigateTool) Description() string {
+func NewBrowserTools() (*BrowserNavigateTool, *BrowserSnapshotTool, *BrowserVisionTool) {
+	session := &BrowserSession{}
+	return &BrowserNavigateTool{Session: session}, &BrowserSnapshotTool{Session: session}, &BrowserVisionTool{Session: session}
+}
+
+func (t *BrowserNavigateTool) session() *BrowserSession {
+	t.once.Do(func() {
+		if t.Session == nil {
+			t.Session = &BrowserSession{}
+		}
+	})
+	return t.Session
+}
+func (t *BrowserSnapshotTool) session() *BrowserSession {
+	t.once.Do(func() {
+		if t.Session == nil {
+			t.Session = &BrowserSession{}
+		}
+	})
+	return t.Session
+}
+func (t *BrowserVisionTool) session() *BrowserSession {
+	t.once.Do(func() {
+		if t.Session == nil {
+			t.Session = &BrowserSession{}
+		}
+	})
+	return t.Session
+}
+
+func (*BrowserNavigateTool) Name() string { return "BrowserNavigate" }
+func (*BrowserNavigateTool) Description() string {
 	return "Navigate the shared headless browser to a URL."
 }
-func (BrowserNavigateTool) InputSchema() map[string]interface{} {
+func (*BrowserNavigateTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -42,9 +82,9 @@ func (BrowserNavigateTool) InputSchema() map[string]interface{} {
 		"required": []string{"url"},
 	}
 }
-func (BrowserNavigateTool) Scope() core.ToolScope { return core.ToolScopeWrite }
-func (BrowserNavigateTool) ParallelSafe() bool    { return false }
-func (t BrowserNavigateTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (*BrowserNavigateTool) Scope() core.ToolScope { return core.ToolScopeWrite }
+func (*BrowserNavigateTool) ParallelSafe() bool    { return false }
+func (t *BrowserNavigateTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	parsed, err := parseBrowserNavigateInput(raw)
 	if err != nil {
 		return nil, err
@@ -54,14 +94,18 @@ func (t BrowserNavigateTool) Validate(raw map[string]interface{}) (map[string]in
 	}
 	return parsed.mapValue(), nil
 }
-func (t BrowserNavigateTool) Summarize(input map[string]interface{}) string {
+func (t *BrowserNavigateTool) Summarize(input map[string]interface{}) string {
 	return "Navigate browser to " + truncate(input["url"].(string), 80)
 }
-func (t BrowserNavigateTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+func (t *BrowserNavigateTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
 	in := browserNavigateInputFrom(input)
-	browserState.Lock()
-	defer browserState.Unlock()
-	pageCtx, err := ensureBrowser(ctx.Context)
+	session := t.session()
+	if _, err := session.NetworkPolicy.ValidateURL(ctx.Context, in.URL); err != nil {
+		return browserToolError(t, input, err), nil
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	pageCtx, err := session.ensure(ctx.Context)
 	if err != nil {
 		return browserToolError(t, input, err), nil
 	}
@@ -70,15 +114,15 @@ func (t BrowserNavigateTool) Execute(input map[string]interface{}, ctx core.Tool
 	if err := chromedp.Run(runCtx, chromedp.Navigate(in.URL), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
 		return browserToolError(t, input, err), nil
 	}
-	browserState.current = in.URL
+	session.current = in.URL
 	return core.ToolResult{Content: "Browser navigated to " + in.URL, Summary: t.Summarize(input)}, nil
 }
 
-func (BrowserSnapshotTool) Name() string { return "BrowserSnapshot" }
-func (BrowserSnapshotTool) Description() string {
+func (*BrowserSnapshotTool) Name() string { return "BrowserSnapshot" }
+func (*BrowserSnapshotTool) Description() string {
 	return "Capture the current browser page accessibility tree as text."
 }
-func (BrowserSnapshotTool) InputSchema() map[string]interface{} {
+func (*BrowserSnapshotTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -86,23 +130,24 @@ func (BrowserSnapshotTool) InputSchema() map[string]interface{} {
 		},
 	}
 }
-func (BrowserSnapshotTool) Scope() core.ToolScope { return core.ToolScopeRead }
-func (BrowserSnapshotTool) ParallelSafe() bool    { return false }
-func (t BrowserSnapshotTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (*BrowserSnapshotTool) Scope() core.ToolScope { return core.ToolScopeRead }
+func (*BrowserSnapshotTool) ParallelSafe() bool    { return false }
+func (t *BrowserSnapshotTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	parsed, err := parseBrowserSnapshotInput(raw)
 	if err != nil {
 		return nil, err
 	}
 	return parsed.mapValue(), nil
 }
-func (t BrowserSnapshotTool) Summarize(input map[string]interface{}) string {
+func (t *BrowserSnapshotTool) Summarize(input map[string]interface{}) string {
 	return "Capture browser accessibility snapshot"
 }
-func (t BrowserSnapshotTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+func (t *BrowserSnapshotTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
 	in := browserSnapshotInputFrom(input)
-	browserState.Lock()
-	defer browserState.Unlock()
-	pageCtx, err := ensureBrowser(ctx.Context)
+	session := t.session()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	pageCtx, err := session.ensure(ctx.Context)
 	if err != nil {
 		return browserToolError(t, input, err), nil
 	}
@@ -121,11 +166,11 @@ func (t BrowserSnapshotTool) Execute(input map[string]interface{}, ctx core.Tool
 	return core.ToolResult{Content: truncate(out, 30000), Summary: fmt.Sprintf("Browser snapshot: %d node(s)", len(nodes))}, nil
 }
 
-func (BrowserVisionTool) Name() string { return "BrowserVision" }
-func (BrowserVisionTool) Description() string {
+func (*BrowserVisionTool) Name() string { return "BrowserVision" }
+func (*BrowserVisionTool) Description() string {
 	return "Take a PNG screenshot of the current browser page and return it as image content."
 }
-func (BrowserVisionTool) InputSchema() map[string]interface{} {
+func (*BrowserVisionTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -134,23 +179,24 @@ func (BrowserVisionTool) InputSchema() map[string]interface{} {
 		},
 	}
 }
-func (BrowserVisionTool) Scope() core.ToolScope { return core.ToolScopeRead }
-func (BrowserVisionTool) ParallelSafe() bool    { return false }
-func (t BrowserVisionTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
+func (*BrowserVisionTool) Scope() core.ToolScope { return core.ToolScopeRead }
+func (*BrowserVisionTool) ParallelSafe() bool    { return false }
+func (t *BrowserVisionTool) Validate(raw map[string]interface{}) (map[string]interface{}, error) {
 	parsed, err := parseBrowserVisionInput(raw)
 	if err != nil {
 		return nil, err
 	}
 	return parsed.mapValue(), nil
 }
-func (t BrowserVisionTool) Summarize(input map[string]interface{}) string {
+func (t *BrowserVisionTool) Summarize(input map[string]interface{}) string {
 	return "Capture browser screenshot"
 }
-func (t BrowserVisionTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
+func (t *BrowserVisionTool) Execute(input map[string]interface{}, ctx core.ToolContext) (core.ToolResult, error) {
 	in := browserVisionInputFrom(input)
-	browserState.Lock()
-	defer browserState.Unlock()
-	pageCtx, err := ensureBrowser(ctx.Context)
+	session := t.session()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	pageCtx, err := session.ensure(ctx.Context)
 	if err != nil {
 		return browserToolError(t, input, err), nil
 	}
@@ -169,28 +215,27 @@ func (t BrowserVisionTool) Execute(input map[string]interface{}, ctx core.ToolCo
 	}, nil
 }
 
-func ensureBrowser(parent context.Context) (context.Context, error) {
+func (b *BrowserSession) ensure(parent context.Context) (context.Context, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
-	if browserState.ctx != nil {
+	if b.ctx != nil {
 		select {
-		case <-browserState.ctx.Done():
-			browserState.ctx = nil
-			if browserState.ctxCancel != nil {
-				browserState.ctxCancel()
+		case <-b.ctx.Done():
+			b.ctx = nil
+			if b.ctxCancel != nil {
+				b.ctxCancel()
 			}
-			if browserState.cancel != nil {
-				browserState.cancel()
+			if b.cancel != nil {
+				b.cancel()
 			}
 		default:
-			return browserState.ctx, nil
+			return b.ctx, nil
 		}
 	}
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),
 		chromedp.WindowSize(1280, 900),
 	)
 	allocCtx, cancel := chromedp.NewExecAllocator(parent, opts...)
@@ -202,12 +247,36 @@ func ensureBrowser(parent context.Context) (context.Context, error) {
 		cancel()
 		return nil, err
 	}
-	browserState.allocCtx = allocCtx
-	browserState.cancel = cancel
-	browserState.ctx = pageCtx
-	browserState.ctxCancel = pageCancel
+	b.allocCtx = allocCtx
+	b.cancel = cancel
+	b.ctx = pageCtx
+	b.ctxCancel = pageCancel
 	return pageCtx, nil
 }
+
+func (b *BrowserSession) Close() error {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ctxCancel != nil {
+		b.ctxCancel()
+	}
+	if b.cancel != nil {
+		b.cancel()
+	}
+	b.allocCtx = nil
+	b.cancel = nil
+	b.ctx = nil
+	b.ctxCancel = nil
+	b.current = ""
+	return nil
+}
+
+func (t *BrowserNavigateTool) Close() error { return t.session().Close() }
+func (t *BrowserSnapshotTool) Close() error { return t.session().Close() }
+func (t *BrowserVisionTool) Close() error   { return t.session().Close() }
 
 func browserToolError(tool interface {
 	Summarize(map[string]interface{}) string

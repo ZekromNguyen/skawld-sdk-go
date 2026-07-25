@@ -30,6 +30,14 @@ type ObservationType = core.ObservationType
 type Tool = core.Tool
 type ToolResult = core.ToolResult
 type ToolContext = core.ToolContext
+type ToolDescriptor = core.ToolDescriptor
+type DescribedTool = core.DescribedTool
+type IdempotentTool = core.IdempotentTool
+type RiskLevel = core.RiskLevel
+type SideEffectKind = core.SideEffectKind
+type IdempotencySupport = core.IdempotencySupport
+type Principal = core.Principal
+type ContentTrust = core.ContentTrust
 type FilesystemPolicy = tools.FilesystemPolicy
 type SessionStore = core.SessionStore
 type PermissionRule = permissions.Rule
@@ -48,6 +56,26 @@ const (
 	BlockToolResult = core.BlockToolResult
 	BlockThinking   = core.BlockThinking
 	BlockImage      = core.BlockImage
+
+	RiskLow      = core.RiskLow
+	RiskMedium   = core.RiskMedium
+	RiskHigh     = core.RiskHigh
+	RiskCritical = core.RiskCritical
+
+	SideEffectNone          = core.SideEffectNone
+	SideEffectIdempotent    = core.SideEffectIdempotent
+	SideEffectNonIdempotent = core.SideEffectNonIdempotent
+	SideEffectUnknown       = core.SideEffectUnknown
+
+	IdempotencyNotApplicable = core.IdempotencyNotApplicable
+	IdempotencyUnsupported   = core.IdempotencyUnsupported
+	IdempotencyOptional      = core.IdempotencyOptional
+	IdempotencyRequired      = core.IdempotencyRequired
+
+	TrustSystemPolicy     = core.TrustSystemPolicy
+	TrustHumanInstruction = core.TrustHumanInstruction
+	TrustToolResult       = core.TrustToolResult
+	TrustUntrustedContent = core.TrustUntrustedContent
 
 	EventSystem            = core.EventSystem
 	EventAssistant         = core.EventAssistant

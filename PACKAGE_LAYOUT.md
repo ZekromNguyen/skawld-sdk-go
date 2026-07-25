@@ -20,6 +20,19 @@ rules.
 | `skills` | Skill definition loading from SKILL.md files. Skill tool. | `core`, `internal/frontmatter` |
 | `subagents` | Subagent definition loading from `.md` files. Subagent tool. | `core`, `internal/frontmatter` |
 | `permissions` | Permission engine: rule evaluation, modes (default/acceptEdits/yolo), request batching. | `core` |
+| `workflow` | Canonical immutable workflow versions, deterministic runtime, output validation, optimistic/fenced checkpoints, deadlines, cancellation, explicit recovery, and immutable execution feedback. | `core`, `policy`, `audit`, `tools` |
+| `observation` | Classified semantic human-demonstration events, ingress redaction, traces, and recording ports. | `core`, `internal/id` |
+| `observation/httpadapter` | Strict, bounded, HMAC-authenticated HTTP business-event observation adapter. | `core`, `observation` |
+| `observation/browseradapter` | Strict browser semantic-event adapter using accessibility/application targets rather than replay coordinates. | `core`, `observation` |
+| `learning` | Optional extraction boundary, deterministic candidate compiler, redacted branch evidence, and content-minimizing feedback analysis. | `core`, `observation`, `workflow` |
+| `learning/structured` | Provider-neutral structured-output extractor with redacted trace projection and strict candidate validation. | `core`, `learning`, `observation`, `workflow` |
+| `evaluation` | Workflow, agent-runtime, and extractor regression runners, metrics, release gates, and report stores. | root `skawld`, `core`, `workflow`, `learning`, `policy`, `audit`, `internal/id` |
+| `policy` | Tool and approval capability authorization, separation of duties, risk evaluation, and approval records/stores. | `core`, `internal/id` |
+| `audit` | Structured action audit records, durable/leased outbox, bounded delivery worker, dispatcher, and append/read ports. | `core` |
+| `automation` | Safe composition of observation, candidate improvement, evaluation, human review, publication, recovery, and deterministic execution. | `core`, `observation`, `learning`, `evaluation`, `workflow`, `audit` |
+| `telemetry` | Safe vendor-neutral observation-to-metric/span adapter and bounded memory sink. | `core` |
+| `storage` | Tenant-key AES-GCM document protection and explicit retention contracts. | `core` |
+| `storage/sqlite` | Transactionally migrated, optionally encrypted workflow, execution, route, feedback, demonstration, approval, audit/outbox, and evaluation adapters. | `storage`, `workflow`, `observation`, `policy`, `audit`, `evaluation` |
 | `internal/sse` | Shared bounded SSE parser. Used by providers and MCP. | (stdlib only) |
 | `internal/frontmatter` | Shared YAML-like frontmatter parser. Used by skills and subagents. | (stdlib only) |
 | `internal/jsoncopy` | Deep-copy helpers for SessionRecord, Messages, ContentBlocks, Tasks. Used by sessions. | `core` |
@@ -31,7 +44,10 @@ rules.
 
 2. **`internal/*` packages have no outward visibility.** They exist solely for shared utilities that multiple sibling packages need (SSE, frontmatter, deep copy, IDs).
 
-3. **No cyclic imports.** The DAG is: `core` → `internal/*` → domain packages (`tools`, `providers`, `sessions`, `skills`, `subagents`, `permissions`, `config`) → root `skawld`.
+3. **No cyclic imports.** `core` and `internal/*` remain foundations. Domain
+   packages and the root runtime build above them. `evaluation` may import the
+   root runtime because it is an optional external harness; the runtime never
+   imports `evaluation`.
 
 4. **`config` decouples from provider imports via `ProviderFactory`.** The default factory lives in `config/factory.go`. Tests can inject a fake factory without linking provider packages.
 

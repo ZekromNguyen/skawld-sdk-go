@@ -3,7 +3,7 @@
 This list tracks the remaining work needed to reach feature parity with the
 original TypeScript `@skawld/agent-sdk`.
 
-Status reviewed against the current Go codebase and tests on 2026-06-04.
+Status reviewed against the current Go codebase and tests on 2026-07-26.
 
 For phased Scrum-style delivery planning, see [`SCRUM_PLAN.md`](./SCRUM_PLAN.md).
 
@@ -64,7 +64,7 @@ maintainability, and operational safety.
   - Why better: one terminal path removes channel ordering bugs and makes provider adapters easier to test.
   - Tradeoff: this is a breaking internal/provider API change, so ship it behind an adapter during migration.
 
-- [ ] Make MCP client transports concurrency-safe and cancellation-aware.
+- [x] Make MCP client transports concurrency-safe and cancellation-aware.
   - Affected code: `tools/mcp/client.go:Client.request`, `tools/mcp/client.go:httpTransport.Request`, `tools/mcp/client.go:httpTransport.Notify`, `tools/mcp/client.go:stdioTransport.Request`, `tools/mcp/client.go:decodeSSEResponse`.
   - Problem: `Client.nextID` is incremented without synchronization; `httpTransport.sessionID` is read and written without a mutex; `stdioTransport.Request` checks context before `json.Decoder.Decode` but cannot interrupt a blocked decode; MCP SSE uses `bufio.Scanner`.
   - Impact: concurrent MCP tool calls can race request IDs and session headers, stdio servers can leave callers blocked after cancellation, and large SSE messages can fail at the scanner token limit.
@@ -93,7 +93,7 @@ maintainability, and operational safety.
   - Why better: request identity and session state become race-free under `ToolConcurrency > 1`.
   - Tradeoff: a demultiplexed stdio transport is more code, but it matches JSON-RPC concurrency semantics.
 
-- [ ] Add `context.Context` to the session store interface and remove internal `context.Background()` database calls.
+- [x] Add `context.Context` to the session store interface and remove internal `context.Background()` database calls.
   - Affected code: `core/store.go`, `sessions/sqlite/store.go:Create`, `AppendMessages`, `UpdateMeta`, `SetInvokedSkills`, `CreateTask`, `UpdateTask`, `DeleteTask`, `loadTasks`, plus call sites in `session.go`, `agent.go`, and task tools.
   - Problem: SQLite operations start transactions with `context.Background()` and query without caller deadlines. The public store interface also has no way to propagate cancellation.
   - Impact: a canceled run can continue waiting on database locks or slow I/O, tying up goroutines and making shutdown unreliable.
@@ -120,7 +120,7 @@ maintainability, and operational safety.
   - Why better: cancellation, timeouts, and shutdown now reach persistence work.
   - Tradeoff: broad signature change; use a compatibility adapter for existing custom stores.
 
-- [ ] Ensure `BashTool.Execute` waits for process cleanup after timeout or cancellation.
+- [x] Ensure `BashTool.Execute` waits for process cleanup after timeout or cancellation.
   - Affected code: `tools/bash.go:Execute`, `tools/helpers.go:taskKillTree`.
   - Problem: on timeout/cancel the tool kills the process tree and returns immediately while the `cmd.Wait` goroutine can still be running. On Unix, `taskKillTree` sleeps for two seconds unconditionally before `SIGKILL`.
   - Impact: command output writers can still be active after the tool result is emitted, process resources can linger, and cancellation consumes worker time unnecessarily.
@@ -143,7 +143,7 @@ maintainability, and operational safety.
 
 ### High
 
-- [ ] Replace `bufio.Scanner` SSE parsing with a streaming reader that supports large events.
+- [x] Replace `bufio.Scanner` SSE parsing with a streaming reader that supports large events.
   - Affected code: `providers/sse.go:postSSE`, `tools/mcp/client.go:decodeSSEResponse`.
   - Problem: `bufio.Scanner` has a default 64 KiB token limit. Large model deltas, MCP resource payloads, or metadata events can fail with `token too long`.
   - Impact: valid provider or MCP responses can terminate streams in production, especially with large tool arguments or reasoning metadata.
@@ -174,7 +174,7 @@ maintainability, and operational safety.
   - Why better: large events fail predictably at an SDK-defined limit instead of an implicit scanner limit.
   - Tradeoff: more parser code; add fixtures for multi-line, CRLF, and oversized events.
 
-- [ ] Inject and reuse HTTP clients with timeouts and shared transports.
+- [x] Inject and reuse HTTP clients with timeouts and shared transports.
   - Affected code: `providers/sse.go:httpClient`, `providers/anthropic.go:Stream`, `providers/openai_chat.go:Stream`, `providers/openai_responses.go:Stream`, `tools/mcp/client.go:newHTTPTransport`.
   - Problem: providers create a new `http.Client{Timeout: 0}` per stream; MCP creates a default client with no timeout. There is no `HTTPDoer` injection point for tests, proxies, tracing, or production tuning.
   - Impact: no request deadline unless the context is honored, weaker connection reuse, harder observability, and less control over TLS/proxy/retry behavior.
@@ -197,7 +197,7 @@ maintainability, and operational safety.
   - Why better: fewer allocations, predictable deadlines, and easier integration with tracing or custom transports.
   - Tradeoff: stream timeouts need to be configurable because long model streams can exceed a fixed timeout.
 
-- [ ] Make all provider adapter sends context-aware.
+- [x] Make all provider adapter sends context-aware.
   - Affected code: direct `out <-` in `providers/anthropic.go:Stream`, `providers/openai_chat.go:Stream`, and `providers/openai_responses.go:Stream`.
   - Problem: provider goroutines send `message_start`, deltas, tool events, and `message_end` without selecting on `ctx.Done()`.
   - Impact: if the loop stops reading, provider goroutines can block even after the HTTP request has been canceled.
@@ -216,7 +216,7 @@ maintainability, and operational safety.
   - Why better: providers respect the same lifecycle as the run loop.
   - Tradeoff: adapter code becomes slightly more verbose until the provider stream API is redesigned.
 
-- [ ] Reduce lock scope in `Agent.Session` and stop mutating caller-owned registries during lazy loading.
+- [x] Reduce lock scope in `Agent.Session` and stop mutating caller-owned registries during lazy loading.
   - Affected code: `agent.go:Session`, `agent.go:connectMCP`, `agent.go:loadSkills`, `agent.go:loadSubagents`, `AgentOptions.Tools`.
   - Problem: `Agent.Session` holds `sessionsMu` while connecting MCP servers, loading skill/subagent files, registering tools, creating/loading sessions, and reading messages. It also registers MCP, Skill, and Subagent tools into `opts.Tools`, which may be a registry owned by the caller or shared across agents.
   - Impact: slow MCP or filesystem work serializes all session creation; shared registries can be mutated unexpectedly and may race if used by multiple agents.
@@ -241,7 +241,7 @@ maintainability, and operational safety.
   - Why better: session creation no longer blocks on unrelated setup, and tool ownership is explicit.
   - Tradeoff: `sync.OnceValue` cannot accept a per-call context; for context-sensitive retries, use `sync.Once` plus a guarded state machine instead.
 
-- [ ] Define and enforce a provider concurrency contract for subagents.
+- [x] Define and enforce a provider concurrency contract for subagents.
   - Affected code: `subagents_runtime.go:runSubagent`, provider implementations.
   - Problem: a child `Agent` reuses `s.agent.opts.Provider` concurrently with the parent. The `core.Provider` interface does not say whether implementations must be safe for concurrent `Stream` calls.
   - Impact: custom providers with mutable state can race or corrupt streams when subagents run alongside parent/tool work.
@@ -260,7 +260,7 @@ maintainability, and operational safety.
   - Why better: SDK behavior is explicit for high-concurrency subagent workflows.
   - Tradeoff: cloning providers may duplicate connection pools unless clients/transports are shared intentionally.
 
-- [ ] Prevent permission callback goroutine leaks and improve callback observability.
+- [x] Prevent permission callback goroutine leaks and improve callback observability.
   - Affected code: `permissions/engine.go:callPermissionCallback`.
   - Problem: `callPermissionCallback` starts a goroutine per callback. If the callback ignores context, `Resolve` returns on cancellation while the callback goroutine continues until it finishes.
   - Impact: abandoned UI/API permission prompts can accumulate goroutines and hide slow callback behavior.
@@ -276,7 +276,7 @@ maintainability, and operational safety.
   - Why better: no unbounded goroutine creation inside permission resolution.
   - Tradeoff: a bad callback can block `Resolve`; document that callbacks must honor context or configure a callback timeout wrapper.
 
-- [ ] Deep-copy mutable session/task/message data in the in-memory store.
+- [x] Deep-copy mutable session/task/message data in the in-memory store.
   - Affected code: `sessions/memory.go:Create`, `Load`, `AppendMessages`, `LoadMessages`, `UpdateMeta`, `CreateTask`, `GetTask`, `ListTasks`.
   - Problem: records, messages, tasks, metadata maps, provider metadata maps, and content input maps are returned shallowly in several paths.
   - Impact: callers can mutate stored state without going through store methods, creating data races and test flakiness.
@@ -297,7 +297,7 @@ maintainability, and operational safety.
   - Why better: store state cannot be changed by external references.
   - Tradeoff: extra allocations; acceptable for test/in-memory correctness and can be optimized with targeted clones.
 
-- [ ] Replace full task-graph replacement in SQLite updates with targeted SQL mutations.
+- [x] Replace full task-graph replacement in SQLite updates with targeted SQL mutations.
   - Affected code: `sessions/sqlite/store.go:UpdateTask`, `DeleteTask`, `loadTasksTx`, `replaceTasksTx`.
   - Problem: updating one task loads every task and edge for the session, mutates in memory, deletes all task edges, and upserts every task.
   - Impact: O(n) writes per task update, lock amplification, poor behavior for sessions with many tasks, and higher conflict risk with concurrent users.
@@ -316,7 +316,7 @@ maintainability, and operational safety.
   - Why better: task updates scale with the patch size instead of total task count.
   - Tradeoff: cycle detection becomes more SQL-heavy; keep the current in-memory algorithm as a fallback for small stores if needed.
 
-- [ ] Stream and bound grep fallback memory use.
+- [x] Stream and bound grep fallback memory use.
   - Affected code: `tools/grep.go:runGrepFallback`.
   - Problem: the fallback reads each file fully with `os.ReadFile`, stores all matching file results, and stores full `fileLines` for content mode.
   - Impact: scanning large repos can allocate heavily or exhaust memory when ripgrep is unavailable.
@@ -349,7 +349,7 @@ maintainability, and operational safety.
 
 ### Medium
 
-- [ ] Avoid repeated JSON marshaling for token estimates and provider request construction.
+- [x] Avoid repeated JSON marshaling for token estimates and provider request construction.
   - Affected code: `session.go:estimateProviderTokens`, `session.go:compactProviderView`, `loop.go:buildProviderRequest`.
   - Problem: every turn can marshal all tools and all messages just to estimate tokens before proactive compaction.
   - Impact: long sessions pay O(history size) CPU and allocation cost on every turn even when compaction is not close.
@@ -372,7 +372,7 @@ maintainability, and operational safety.
   - Why better: steady-state turn cost is proportional to new messages.
   - Tradeoff: estimates can drift; periodically recompute or reset after compaction.
 
-- [ ] Reduce weak `map[string]interface{}` usage at tool and provider boundaries.
+- [x] Reduce weak `map[string]interface{}` usage at tool and provider boundaries.
   - Affected code: `core/tool.go`, tool `Validate` methods, provider translation code, MCP conversion.
   - Problem: internal code repeatedly asserts values like `input["command"].(string)` after validation. Public schemas and dynamic provider payloads still need JSON-like maps, but validated runtime inputs do not.
   - Impact: readability suffers, invalid inputs can panic if a caller bypasses validation, and refactors are hard because field names are stringly typed.
@@ -396,7 +396,7 @@ maintainability, and operational safety.
   - Why better: implementation code becomes type-safe after one parsing step.
   - Tradeoff: the generic `core.Tool` interface still needs dynamic maps for third-party tools; typed helpers should be optional.
 
-- [ ] Improve error wrapping and typed error preservation across tools and stores.
+- [x] Improve error wrapping and typed error preservation across tools and stores.
   - Affected code: `tools/*.go`, `sessions/sqlite/store.go`, `tools/mcp/client.go`, `permissions/engine.go`, provider translators.
   - Problem: many errors are returned as plain strings in `ToolResult`, several store/provider errors are returned without `%w`, and MCP close joins strings instead of preserving causes.
   - Impact: callers cannot reliably use `errors.Is`/`errors.As`, logs lose cause chains, and retry/observability logic is weaker.
@@ -412,7 +412,7 @@ maintainability, and operational safety.
   - Why better: higher layers can classify errors without parsing strings.
   - Tradeoff: tool results still need user-facing strings; keep typed errors for SDK callers and render separately for model-facing content.
 
-- [ ] Add structured logging and observability hooks.
+- [x] Add structured logging and observability hooks.
   - Affected code: `AgentOptions`, `loop.go`, provider adapters, MCP manager, stores, tools.
   - Problem: operational visibility is available only through the event stream. There is no `slog.Logger`, trace hook, request ID propagation, or metrics surface for provider latency, retries, tool duration, permission latency, compaction, and store timings.
   - Impact: production incidents require reproducing event streams instead of using normal logs/metrics/traces.
@@ -434,7 +434,7 @@ maintainability, and operational safety.
   - Why better: runtime behavior becomes visible without changing the event API.
   - Tradeoff: logging must avoid secrets and large tool/provider payloads by default.
 
-- [ ] Unify skill and subagent frontmatter parsing.
+- [x] Unify skill and subagent frontmatter parsing.
   - Affected code: `skills/loader.go:parseFrontmatter`, `subagents/loader.go:parseFrontmatter`.
   - Problem: the same ad hoc YAML-like parser is duplicated and supports only a small subset of YAML.
   - Impact: divergent behavior is likely, quoted values/lists are fragile, and metadata validation is weak.
@@ -453,7 +453,7 @@ maintainability, and operational safety.
   - Why better: one parser, typed metadata, and consistent validation across runtime resources.
   - Tradeoff: a YAML dependency adds weight; a shared mini-parser avoids dependency cost but remains limited.
 
-- [ ] Separate config loading from provider construction.
+- [x] Separate config loading from provider construction.
   - Affected code: `config/config.go:File.AgentOptions`, `config/config.go:provider`.
   - Problem: the config package imports concrete provider implementations and constructs them directly.
   - Impact: config parsing is tightly coupled to provider packages, custom providers cannot participate without bypassing config, and validation of secrets/base URLs is minimal.
@@ -475,7 +475,7 @@ maintainability, and operational safety.
   - Why better: package boundaries are cleaner and tests can bind fake providers without config knowing them.
   - Tradeoff: slightly more setup for simple examples.
 
-- [ ] Add explicit workspace/root policy for filesystem tools.
+- [x] Add explicit workspace/root policy for filesystem tools.
   - Affected code: `tools/helpers.go:resolvePath`, `tools/read.go`, `tools/write.go`, `tools/edit.go`, `tools/glob.go`, `tools/grep.go`, `permissions/engine.go:matchPathRule`.
   - Problem: paths are resolved relative to `CWD`, but absolute paths are allowed. Permissions can restrict paths, yet the tool layer itself has no root jail or symlink policy.
   - Impact: in embedded/server use, a misconfigured permission policy can allow reads/writes outside the intended project root.
@@ -502,7 +502,7 @@ maintainability, and operational safety.
   - Why better: security does not depend only on model-facing permission rules.
   - Tradeoff: some users intentionally operate outside `CWD`; make the policy configurable and default-compatible.
 
-- [ ] Use `slices` and `maps` package helpers for clearer collection code.
+- [x] Use `slices` and `maps` package helpers for clearer collection code.
   - Affected code: repeated contains/clone/sort helpers in `permissions`, `sessions`, `tools`, `providers`.
   - Problem: hand-written collection helpers are duplicated and increase small bug surface.
   - Impact: maintainability cost and inconsistent clone/contains behavior.
@@ -519,7 +519,7 @@ maintainability, and operational safety.
 
 ### Low
 
-- [ ] Add benchmarks for known hot paths before major refactors.
+- [x] Add benchmarks for known hot paths before major refactors.
   - Targets: `runLoop` scheduling with many tool calls, provider translation functions, `estimateProviderTokens`, `Glob` and `Grep` fallback on large trees, SQLite task updates with 100/1,000/10,000 tasks, MCP SSE parsing, compaction request construction.
   - Problem: performance-sensitive code has tests but no benchmark baselines.
   - Impact: optimization work cannot prove improvements or catch regressions.
@@ -538,7 +538,7 @@ maintainability, and operational safety.
   - Why better: refactors are guided by data.
   - Tradeoff: benchmark fixtures need maintenance as core types evolve.
 
-- [ ] Add race/leak tests for cancellation and abandoned streams.
+- [x] Add race/leak tests for cancellation and abandoned streams.
   - Targets: abandoned `Session.Run`, provider error during partial output, canceled permission callback, canceled MCP stdio request, canceled `Bash`, parallel MCP tool calls, subagent parent cancellation.
   - Problem: current tests cover behavior but not enough lifecycle failure modes.
   - Impact: goroutine leaks and races can pass normal `go test ./...`.
@@ -556,7 +556,7 @@ maintainability, and operational safety.
   - Why better: lifecycle fixes stay fixed.
   - Tradeoff: goroutine-count tests can be flaky; prefer explicit done channels where possible.
 
-- [ ] Normalize naming around sessions, stores, and runtime resources.
+- [x] Normalize naming around sessions, stores, and runtime resources.
   - Affected code: `AgentOptions`, `Session`, `providerView`, `fullHistory`, `MCPServers`, `AgentsDir`, `Subagent`.
   - Problem: some names mix public config language with implementation details. `providerView` and `fullHistory` are meaningful only after reading compaction code, and `AgentsDir` refers specifically to subagent definitions.
   - Impact: onboarding and maintenance are harder than necessary.
@@ -571,7 +571,7 @@ maintainability, and operational safety.
   - Why better: field names explain their role without requiring comments.
   - Tradeoff: public option renames require deprecation aliases.
 
-- [ ] Document the public concurrency contract.
+- [x] Document the public concurrency contract.
   - Affected code: package docs in `doc.go`, `core/provider.go`, `core/tool.go`, `tools/registry.go`, `sessions`.
   - Problem: it is not clear which types are safe for concurrent use: `Agent`, `Session`, `Provider`, `Tool`, `Registry`, `SessionStore`, MCP clients.
   - Impact: SDK users can accidentally share unsafe implementations across agents or sessions.

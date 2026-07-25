@@ -22,6 +22,11 @@ func TestNoImportCycles(t *testing.T) {
 		"github.com/ZekromNguyen/skawld-sdk-go/skills",
 		"github.com/ZekromNguyen/skawld-sdk-go/subagents",
 		"github.com/ZekromNguyen/skawld-sdk-go/permissions",
+		"github.com/ZekromNguyen/skawld-sdk-go/workflow",
+		"github.com/ZekromNguyen/skawld-sdk-go/observation",
+		"github.com/ZekromNguyen/skawld-sdk-go/learning",
+		"github.com/ZekromNguyen/skawld-sdk-go/learning/structured",
+		"github.com/ZekromNguyen/skawld-sdk-go/automation",
 	}
 	for _, pkg := range packages {
 		_, err := build.Import(pkg, "", build.FindOnly)

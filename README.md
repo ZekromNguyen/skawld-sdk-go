@@ -1,9 +1,12 @@
 # Skawld Agent SDK for Go
 
-A Go-native agent SDK for building AI coding assistants. Provides an embeddable
-Agent runtime with streaming providers, built-in tools, permissions, session
-persistence, skills, subagents, and MCP tool integration — plus a premium
-terminal UI (Raven CLI) that consumes the SDK event stream.
+A Go-native SDK with two complementary runtimes:
+
+- a streaming coding-agent runtime with providers, tools, permissions,
+  sessions, skills, subagents, and MCP; and
+- a provider-independent deterministic workflow runtime with semantic
+  demonstrations, immutable workflow versions, policy/approval checkpoints,
+  idempotency controls, and audit records.
 
 ```sh
 go test ./...
@@ -37,7 +40,7 @@ func main() {
     agent, err := skawld.NewAgent(skawld.AgentOptions{
         Provider: providers.NewOpenAIResponsesProvider(providers.OpenAIOptions{}),
         Model:    "gpt-5",
-        Tools:    tools.DefaultTools(),
+        ToolProfile: tools.ProfileCoding,
         Permissions: skawld.PermissionOptions{
             Mode: skawld.PermissionModeDefault,
         },
@@ -130,11 +133,31 @@ raven --model claude-haiku-4-5
 | `github.com/ZekromNguyen/skawld-sdk-go/subagents` | Agent-definition loader, registry, Subagent tool |
 | `github.com/ZekromNguyen/skawld-sdk-go/config` | JSON config schema and loader |
 | `github.com/ZekromNguyen/skawld-sdk-go/core` | Shared types: messages, content blocks, events, provider/tool/store contracts |
+| `github.com/ZekromNguyen/skawld-sdk-go/workflow` | Versioned workflow model, deterministic executor, fenced checkpoints, deadlines/cancellation, routes/feedback, explicit uncertain-execution recovery |
+| `github.com/ZekromNguyen/skawld-sdk-go/observation` | Classified semantic human-demonstration events, ingress redaction, traces, and recorder |
+| `github.com/ZekromNguyen/skawld-sdk-go/observation/httpadapter` | HMAC-authenticated semantic business-event HTTP ingress |
+| `github.com/ZekromNguyen/skawld-sdk-go/observation/browseradapter` | Bounded browser semantic-event adapter using accessibility/application identity |
+| `github.com/ZekromNguyen/skawld-sdk-go/learning` | Optional, vendor-neutral trace-to-candidate compiler boundary |
+| `github.com/ZekromNguyen/skawld-sdk-go/learning/structured` | Strict provider-neutral structured-output workflow extractor with redacted trace projection |
+| `github.com/ZekromNguyen/skawld-sdk-go/evaluation` | Workflow, agent-runtime, and extractor evaluation; metrics, safety checks, and release gates |
+| `github.com/ZekromNguyen/skawld-sdk-go/policy` | Tool and approval capability authorization, separation of duties, risk policy, and approval lifecycle |
+| `github.com/ZekromNguyen/skawld-sdk-go/audit` | Structured audit events, durable/leased outbox, bounded delivery worker, and sinks |
+| `github.com/ZekromNguyen/skawld-sdk-go/automation` | Controlled demonstration, learning/improvement, evaluation, human-review, publication, recovery, and execution facade |
+| `github.com/ZekromNguyen/skawld-sdk-go/telemetry` | Vendor-neutral metric/span records and bounded local sink |
+| `github.com/ZekromNguyen/skawld-sdk-go/storage` | Tenant-key document protection and explicit retention contracts |
+| `github.com/ZekromNguyen/skawld-sdk-go/storage/sqlite` | Migrated, optionally encrypted/re-keyable workflow, fenced execution, demonstration, approval, audit/outbox, and evaluation stores |
 | `github.com/ZekromNguyen/skawld-sdk-go/internal/` | Private helpers (ID generation, frontmatter parser, SSE parser) |
 | `github.com/ZekromNguyen/skawld-sdk-go/cmd/raven` | Raven CLI — premium terminal UI |
 | `github.com/ZekromNguyen/skawld-sdk-go/examples/minimal` | Minimal one-shot agent example |
 | `github.com/ZekromNguyen/skawld-sdk-go/examples/interactive_cli` | Interactive chat-loop example |
 | `github.com/ZekromNguyen/skawld-sdk-go/examples/mcp_agent` | Agent with MCP server integration |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/invoice_reconciliation` | Semantic recording and deterministic approval-gated workflow |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/learned_invoice` | Complete demonstration-to-learned-workflow lifecycle with review, release gates, resolution, approval, and execution |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/multiple_demonstrations` | Multi-trace analysis and evidence-validated candidate extraction |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/workflow_evaluation` | Deterministic workflow regression metrics and release gates |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/agent_evaluation` | Real SDK agent-loop evaluation with a fixture provider |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/extractor_evaluation` | Trace-extractor accuracy, evidence, cost, and release gates |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/http_observation` | Signed HTTP business event captured as a semantic demonstration |
 
 ## Provider setup
 
@@ -310,6 +333,12 @@ Skills support shell argument substitution, overlay handling, and a built-in
 `Skill` tool. Subagents run with their own provider instance and model
 configuration.
 
+This repository includes project-local development skills for Git branch
+workflow, systematic debugging, test-driven development, completion
+verification, code review, security best practices, and threat modeling. Their
+source revisions and licenses are recorded in
+`.skawld/skills/THIRD_PARTY_NOTICES.md`.
+
 ## Compaction
 
 Automatic context compaction triggers when estimated token usage exceeds the
@@ -374,6 +403,16 @@ skawld-sdk-go/
   skills/                 SKILL.md loader and Skill tool
   subagents/              Agent-definition loader and Subagent tool
   config/                 JSON config schema and loader
+  workflow/               Deterministic workflow runtime and execution safety
+  observation/            Semantic demonstrations and ingress minimization
+  learning/               Trace analysis and candidate compilation
+  policy/                 Capability, risk, and approval policy
+  audit/                  Structured audit records and leased outbox
+  automation/             Safe application lifecycle facade
+  evaluation/             Deterministic and agentic evaluation harnesses
+  telemetry/              Vendor-neutral workflow telemetry
+  storage/                Document protection and retention contracts
+  storage/sqlite/         Durable workflow-domain persistence
   internal/               Private helpers (id, sse, frontmatter, jsoncopy)
 
   cmd/raven/              Raven CLI terminal UI
@@ -402,9 +441,9 @@ skawld-sdk-go/
 See `docs/RELEASE_CHECKLIST.md` and `TODO.md` for tracked open items. Notable
 areas still in progress:
 
-- Abandoned run iterator cleanup semantics
 - Memory session parity with TypeScript SDK
 - Permissions/tool parity rollups for remaining TypeScript fixtures
+- Live provider and MCP release smoke tests
 
 ## License
 

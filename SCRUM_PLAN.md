@@ -439,10 +439,8 @@ Testing tasks:
 - [x] Add MCP HTTP race tests for concurrent tool calls.
 - [x] Add MCP stdio cancellation tests with a blocking fake server.
 - [x] Add Bash timeout and cancellation tests that verify `cmd.Wait` is joined.
-- [ ] Run `go test -race ./tools/mcp ./providers ./tools`.
-      Blocked locally on 2026-06-06: race builds require CGO and `gcc` is not
-      installed in this Windows environment. Concurrency coverage and
-      `go test ./...` pass.
+- [x] Run `go test -race ./tools/mcp ./providers ./tools`.
+      Verified as part of `go test -race ./...` on 2026-07-26.
 
 Acceptance criteria:
 
@@ -522,10 +520,8 @@ Testing tasks:
 - [x] Add race-focused tests for parent and subagent provider use.
 - [x] Add filesystem policy tests for allowed roots, denied roots, absolute
       paths, and symlink cases.
-- [ ] Run `go test -race ./...` for affected packages.
-      Blocked locally on 2026-06-07: race builds require CGO and `gcc` is not
-      installed in this Windows environment. Verified affected coverage with
-      `go test .`, `go test ./tools`, and `go test ./...`.
+- [x] Run `go test -race ./...` for affected packages.
+      Verified on 2026-07-26.
 
 Acceptance criteria:
 
@@ -678,15 +674,15 @@ Testing tasks:
 - [x] Run `gofmt ./...`.
 - [x] Run `go vet ./...`.
 - [x] Run `go test ./...`.
-- [ ] Run `go test -race ./...`. (not available in CI — blocked on CGO/gcc)
+- [x] Run `go test -race ./...`. (verified locally on 2026-07-26)
 - [x] Run targeted benchmarks with `-benchmem`.
 - [x] Run examples build tests.
 
 Acceptance criteria:
 
 - [x] No known goroutine leaks in lifecycle tests.
-- [x] No data races found in the supported concurrency test suite (verified via
-      stress tests; race detector requires CGO).
+- [x] No data races found in the supported concurrency test suite and full
+      race-detector run.
 - [x] Benchmark results are recorded for the main hot paths.
 - [x] Documentation describes all production-relevant lifecycle, concurrency,
       security, and observability behavior.
@@ -727,3 +723,104 @@ Sprint 14 (completed 2026-06-11):
 - [x] Phase 16 shared parsers and package boundary cleanup
 - [x] Phase 16 typed tool/config internals
 - [x] Phase 17 production validation and release gate
+
+## Phase 18: Workflow Production Boundaries
+
+Goal: make learned workflow execution fail closed at identity, authorization,
+side-effect, audit, approval, persistence, and learning boundaries.
+
+Status: completed on 2026-07-26.
+
+Implementation tasks:
+
+- [x] Add exact role-to-capability authorization using trusted principal roles.
+- [x] Require complete, context-bound tenant and actor execution identity.
+- [x] Validate actual tool outputs against trusted structural schemas.
+- [x] Add a durable audit outbox and recovery-safe post-side-effect ordering.
+- [x] Add explicit uncertain-execution reconciliation decisions.
+- [x] Add approval deadlines, persistent expiration, and cancellation.
+- [x] Add ordered transactional SQLite migrations with downgrade rejection.
+- [x] Gate feedback-driven candidates on new demonstrations and retain release gates.
+- [x] Discover redacted, evidence-linked branch-condition candidates.
+- [x] Add a bounded semantic browser observation adapter that rejects replay primitives.
+
+Acceptance criteria:
+
+- [x] Untrusted method arguments cannot add authorization roles.
+- [x] Missing capabilities and incomplete/mismatched identities fail before tools run.
+- [x] Invalid side-effect outputs or post-effect audit failures require reconciliation.
+- [x] Downstream audit delivery failure does not misreport a durably enqueued business operation.
+- [x] Expired or canceled approvals cannot execute their guarded tool.
+- [x] Existing SQLite databases migrate on open and newer schemas fail closed.
+- [x] Feedback and branch evidence cannot directly publish executable behavior.
+- [x] Browser observations encode accessible semantic identity, not coordinates or scripts.
+- [x] Full tests, race detection, vet, examples, and diff hygiene pass.
+
+## Phase 19: Workflow Operational Safety P0
+
+Goal: close the remaining production blockers around approvals, audit delivery,
+sensitive persistence, and recovery of uncertain side effects.
+
+Status: completed on 2026-07-26.
+
+Implementation tasks:
+
+- [x] Add capability-authorized approval decisions with tenant/actor binding
+      and configurable separation of duties.
+- [x] Add leased durable audit-outbox delivery with bounded batches,
+      exponential backoff, dead-letter handling, and explicit requeue.
+- [x] Add tenant-bound AES-256-GCM document protection and fail-closed
+      production storage configuration.
+- [x] Add transactional migration of legacy plaintext documents and
+      lifecycle-aware, tenant-scoped retention.
+- [x] Add deterministic tool reconciliation adapters for uncertain executions
+      without replaying side effects.
+
+Acceptance criteria:
+
+- [x] Approval roles come only from the authenticated context and an initiator
+      cannot approve their own request when separation of duties is enabled.
+- [x] Multiple audit workers cannot concurrently own the same live lease;
+      exhausted deliveries enter a queryable dead-letter state.
+- [x] Protected SQLite databases cannot be opened without an appropriate
+      document protector, and encrypted documents are bound to their tenant.
+- [x] Retention never deletes active executions, demonstrations, approvals, or
+      undelivered audit records.
+- [x] Recovery changes execution state only from authoritative deterministic
+      reconciliation evidence and never replays the original tool implicitly.
+- [x] Full tests, race detection, vet, examples, and diff hygiene pass.
+
+## Phase 20: Workflow Operational Safety P1
+
+Goal: make long-running workflow operation safe across multiple workers,
+execution deadlines, key rotation, and sensitive observation capture.
+
+Status: completed on 2026-07-26.
+
+Implementation tasks:
+
+- [x] Add tenant-scoped execution claims with lease expiry and monotonically
+      increasing fencing tokens.
+- [x] Add executor lease acquisition, heartbeat renewal, loss cancellation,
+      and release with an opt-in fail-closed production mode.
+- [x] Persist workflow-wide deadlines and add explicit audited cancellation
+      that closes pending approvals.
+- [x] Add historical-key support and transactional tenant document re-keying.
+- [x] Add trusted observation sensitivity and deterministic ingress redaction
+      for event, initial-context, and final-result maps.
+
+Acceptance criteria:
+
+- [x] A competing worker cannot claim a live execution lease or checkpoint
+      using a stale fencing token.
+- [x] Existing single-process callers remain compatible unless leased
+      execution is explicitly required.
+- [x] Workflow deadlines survive approval pauses and end with a typed timeout
+      state without executing later steps.
+- [x] Explicit cancellation persists terminal execution and approval state
+      before returning.
+- [x] Key rotation is transactional and old keys can be retired only after
+      protected rows are re-keyed.
+- [x] Adapter payloads cannot choose a lower classification and configured
+      secrets are removed before traces are stored.
+- [x] Full tests, race detection, vet, examples, and diff hygiene pass.

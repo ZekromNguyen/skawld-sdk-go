@@ -19,7 +19,7 @@ func main() {
 	}
 	var doc struct {
 		Jobs map[string]struct {
-			Name string `yaml:"name"`
+			Name  string   `yaml:"name"`
 			Needs []string `yaml:"needs"`
 			Steps []struct {
 				Name string `yaml:"name"`

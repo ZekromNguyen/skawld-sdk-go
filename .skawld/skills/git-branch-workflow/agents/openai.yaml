@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Branch Workflow"
+  short_description: "Safely manage feature, release, hotfix, and production branches"
+  default_prompt: "Use $git-branch-workflow to choose the correct branch and perform this Git change safely."

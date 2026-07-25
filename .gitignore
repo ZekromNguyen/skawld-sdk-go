@@ -13,5 +13,8 @@ coverage.out
 .vscode/
 *.swp
 
-# Skawld runtime state
-.skawld/
+# Skawld runtime state. Project-local skills are source; keep all other
+# generated/runtime state ignored.
+.skawld/*
+!.skawld/skills/
+!.skawld/skills/**

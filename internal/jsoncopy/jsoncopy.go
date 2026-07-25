@@ -1,6 +1,6 @@
 package jsoncopy
 
-import "github.com/skawld/skawld-sdk-go/core"
+import "github.com/ZekromNguyen/skawld-sdk-go/core"
 
 // Map deep-copies a JSON-like object map.
 func Map(in map[string]interface{}) map[string]interface{} {

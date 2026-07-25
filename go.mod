@@ -1,4 +1,4 @@
-module github.com/skawld/skawld-sdk-go
+module github.com/ZekromNguyen/skawld-sdk-go
 
 go 1.22
 

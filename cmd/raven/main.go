@@ -24,11 +24,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go"
-	"github.com/skawld/skawld-sdk-go/cmd/raven/internal/tui"
-	"github.com/skawld/skawld-sdk-go/config"
-	"github.com/skawld/skawld-sdk-go/providers"
-	"github.com/skawld/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go"
+	"github.com/ZekromNguyen/skawld-sdk-go/cmd/raven/internal/tui"
+	"github.com/ZekromNguyen/skawld-sdk-go/config"
+	"github.com/ZekromNguyen/skawld-sdk-go/providers"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
 
 var (

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 // Registry stores tools by name. Registry methods are safe for concurrent use;

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go"
-	"github.com/skawld/skawld-sdk-go/cmd/raven/internal/tui"
+	"github.com/ZekromNguyen/skawld-sdk-go"
+	"github.com/ZekromNguyen/skawld-sdk-go/cmd/raven/internal/tui"
 )
 
 // ─── Modal Dispatch ─────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 package skawld
 
 import (
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/permissions"
-	"github.com/skawld/skawld-sdk-go/tools"
-	"github.com/skawld/skawld-sdk-go/tools/mcp"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/permissions"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools/mcp"
 )
 
 type ModelID = core.ModelID

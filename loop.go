@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/internal/id"
-	"github.com/skawld/skawld-sdk-go/permissions"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/internal/id"
+	"github.com/ZekromNguyen/skawld-sdk-go/permissions"
 )
 
 type eventEmitter struct {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 // FilesystemPolicy constrains built-in filesystem tools to approved roots.

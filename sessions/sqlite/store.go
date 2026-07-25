@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	idgen "github.com/skawld/skawld-sdk-go/internal/id"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	idgen "github.com/ZekromNguyen/skawld-sdk-go/internal/id"
 	_ "modernc.org/sqlite"
 )
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 type observedSessionStore struct {

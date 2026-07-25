@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 type TaskCreateTool struct{}

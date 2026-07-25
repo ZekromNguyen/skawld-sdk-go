@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 const problemSolvingSystemHeader = "Problem-solving run state:"

@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/permissions"
-	"github.com/skawld/skawld-sdk-go/sessions"
-	"github.com/skawld/skawld-sdk-go/skills"
-	"github.com/skawld/skawld-sdk-go/subagents"
-	"github.com/skawld/skawld-sdk-go/tools"
-	"github.com/skawld/skawld-sdk-go/tools/mcp"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/permissions"
+	"github.com/ZekromNguyen/skawld-sdk-go/sessions"
+	"github.com/ZekromNguyen/skawld-sdk-go/skills"
+	"github.com/ZekromNguyen/skawld-sdk-go/subagents"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools/mcp"
 )
 
 type PermissionOptions struct {

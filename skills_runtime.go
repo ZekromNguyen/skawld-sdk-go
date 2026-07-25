@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/skills"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/skills"
 )
 
 func (s *Session) invokeSkill(ctx context.Context, inv core.SkillInvocation, emitter *eventEmitter) (core.ToolResult, error) {

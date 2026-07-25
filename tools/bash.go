@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 const streamCap = 30000

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	skawld "github.com/skawld/skawld-sdk-go"
-	"github.com/skawld/skawld-sdk-go/core"
+	skawld "github.com/ZekromNguyen/skawld-sdk-go"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 	_ "modernc.org/sqlite"
 )
 

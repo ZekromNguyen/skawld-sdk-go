@@ -1,9 +1,9 @@
 package skawld
 
 import (
-	"github.com/skawld/skawld-sdk-go/config"
-	"github.com/skawld/skawld-sdk-go/sessions"
-	"github.com/skawld/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/config"
+	"github.com/ZekromNguyen/skawld-sdk-go/sessions"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
 
 func AgentOptionsFromConfig(opts config.AgentOptions) AgentOptions {

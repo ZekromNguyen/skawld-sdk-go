@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 func TestConvertToolResultTextImageAndStructured(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 func TestAnthropicTranslationIncludesSystemToolsAndContentBlocks(t *testing.T) {

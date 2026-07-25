@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 func TestInMemoryTaskEdgesAreReciprocalAndRemovable(t *testing.T) {

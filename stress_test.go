@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/tools/mcp"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools/mcp"
 )
 
 // TestStressConcurrentSessionCreation verifies that multiple sessions can be

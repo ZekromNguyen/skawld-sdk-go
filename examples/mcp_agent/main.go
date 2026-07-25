@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	skawld "github.com/skawld/skawld-sdk-go"
-	"github.com/skawld/skawld-sdk-go/providers"
-	"github.com/skawld/skawld-sdk-go/tools"
-	"github.com/skawld/skawld-sdk-go/tools/mcp"
+	skawld "github.com/ZekromNguyen/skawld-sdk-go"
+	"github.com/ZekromNguyen/skawld-sdk-go/providers"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools/mcp"
 )
 
 func main() {

@@ -12,7 +12,7 @@ import (
 
 	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/chromedp"
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 type BrowserNavigateTool struct{}

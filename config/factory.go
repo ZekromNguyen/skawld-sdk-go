@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/providers"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/providers"
 )
 
 // ProviderFactory creates a core.Provider from a config File. Callers can

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 // fakeProvider is a minimal core.Provider for testing config factory wiring.

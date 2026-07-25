@@ -28,9 +28,9 @@ import (
     "fmt"
     "os"
 
-    skawld "github.com/skawld/skawld-sdk-go"
-    "github.com/skawld/skawld-sdk-go/providers"
-    "github.com/skawld/skawld-sdk-go/tools"
+    skawld "github.com/ZekromNguyen/skawld-sdk-go"
+    "github.com/ZekromNguyen/skawld-sdk-go/providers"
+    "github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
 
 func main() {
@@ -119,22 +119,22 @@ raven --model claude-haiku-4-5
 
 | Package | Purpose |
 |---------|---------|
-| `github.com/skawld/skawld-sdk-go` | Root: `Agent`, `Session`, `RunHandle`, events, core aliases, errors |
-| `github.com/skawld/skawld-sdk-go/providers` | Anthropic Messages, OpenAI Chat Completions, OpenAI Responses providers |
-| `github.com/skawld/skawld-sdk-go/tools` | `Registry`, `DefaultTools`, built-in tools (Read, Write, Edit, Bash, Glob, Grep, Task*) |
-| `github.com/skawld/skawld-sdk-go/tools/mcp` | MCP client, server configs (stdio + HTTP), MCP Tool wrapper |
-| `github.com/skawld/skawld-sdk-go/permissions` | `Engine`, rule matching, permission modes, `CanUseTool` callback |
-| `github.com/skawld/skawld-sdk-go/sessions` | In-memory `SessionStore` |
-| `github.com/skawld/skawld-sdk-go/sessions/sqlite` | Persistent SQLite-backed `SessionStore` |
-| `github.com/skawld/skawld-sdk-go/skills` | SKILL.md loader, frontmatter parsing, shell argument substitution, Skill tool |
-| `github.com/skawld/skawld-sdk-go/subagents` | Agent-definition loader, registry, Subagent tool |
-| `github.com/skawld/skawld-sdk-go/config` | JSON config schema and loader |
-| `github.com/skawld/skawld-sdk-go/core` | Shared types: messages, content blocks, events, provider/tool/store contracts |
-| `github.com/skawld/skawld-sdk-go/internal/` | Private helpers (ID generation, frontmatter parser, SSE parser) |
-| `github.com/skawld/skawld-sdk-go/cmd/raven` | Raven CLI — premium terminal UI |
-| `github.com/skawld/skawld-sdk-go/examples/minimal` | Minimal one-shot agent example |
-| `github.com/skawld/skawld-sdk-go/examples/interactive_cli` | Interactive chat-loop example |
-| `github.com/skawld/skawld-sdk-go/examples/mcp_agent` | Agent with MCP server integration |
+| `github.com/ZekromNguyen/skawld-sdk-go` | Root: `Agent`, `Session`, `RunHandle`, events, core aliases, errors |
+| `github.com/ZekromNguyen/skawld-sdk-go/providers` | Anthropic Messages, OpenAI Chat Completions, OpenAI Responses providers |
+| `github.com/ZekromNguyen/skawld-sdk-go/tools` | `Registry`, `DefaultTools`, built-in tools (Read, Write, Edit, Bash, Glob, Grep, Task*) |
+| `github.com/ZekromNguyen/skawld-sdk-go/tools/mcp` | MCP client, server configs (stdio + HTTP), MCP Tool wrapper |
+| `github.com/ZekromNguyen/skawld-sdk-go/permissions` | `Engine`, rule matching, permission modes, `CanUseTool` callback |
+| `github.com/ZekromNguyen/skawld-sdk-go/sessions` | In-memory `SessionStore` |
+| `github.com/ZekromNguyen/skawld-sdk-go/sessions/sqlite` | Persistent SQLite-backed `SessionStore` |
+| `github.com/ZekromNguyen/skawld-sdk-go/skills` | SKILL.md loader, frontmatter parsing, shell argument substitution, Skill tool |
+| `github.com/ZekromNguyen/skawld-sdk-go/subagents` | Agent-definition loader, registry, Subagent tool |
+| `github.com/ZekromNguyen/skawld-sdk-go/config` | JSON config schema and loader |
+| `github.com/ZekromNguyen/skawld-sdk-go/core` | Shared types: messages, content blocks, events, provider/tool/store contracts |
+| `github.com/ZekromNguyen/skawld-sdk-go/internal/` | Private helpers (ID generation, frontmatter parser, SSE parser) |
+| `github.com/ZekromNguyen/skawld-sdk-go/cmd/raven` | Raven CLI — premium terminal UI |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/minimal` | Minimal one-shot agent example |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/interactive_cli` | Interactive chat-loop example |
+| `github.com/ZekromNguyen/skawld-sdk-go/examples/mcp_agent` | Agent with MCP server integration |
 
 ## Provider setup
 
@@ -259,7 +259,7 @@ Permissions: skawld.PermissionOptions{
 Persistent sessions with full message history:
 
 ```go
-import "github.com/skawld/skawld-sdk-go/sessions/sqlite"
+import "github.com/ZekromNguyen/skawld-sdk-go/sessions/sqlite"
 
 store, err := sqlite.Open("skawld.db")
 if err != nil {

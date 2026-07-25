@@ -3,7 +3,7 @@
 This Go module is organized around the same public concepts as the original
 TypeScript SDK while using normal Go package boundaries. It intentionally keeps
 the main SDK package at the module root, which is the standard layout for a Go
-library meant to be imported as `github.com/skawld/skawld-sdk-go`.
+library meant to be imported as `github.com/ZekromNguyen/skawld-sdk-go`.
 
 ```text
 skawld-sdk-go/
@@ -70,11 +70,11 @@ skawld-sdk-go/
 
 ## Public Package Intent
 
-- `github.com/skawld/skawld-sdk-go`: the ergonomic main import for most users.
-- `github.com/skawld/skawld-sdk-go/providers`: provider constructors.
-- `github.com/skawld/skawld-sdk-go/tools`: registry and built-in tools.
-- `github.com/skawld/skawld-sdk-go/sessions`: session stores.
-- `github.com/skawld/skawld-sdk-go/permissions`: permission rules and callbacks.
+- `github.com/ZekromNguyen/skawld-sdk-go`: the ergonomic main import for most users.
+- `github.com/ZekromNguyen/skawld-sdk-go/providers`: provider constructors.
+- `github.com/ZekromNguyen/skawld-sdk-go/tools`: registry and built-in tools.
+- `github.com/ZekromNguyen/skawld-sdk-go/sessions`: session stores.
+- `github.com/ZekromNguyen/skawld-sdk-go/permissions`: permission rules and callbacks.
 
 Packages such as `skills`, `subagents`, `config`, `tools/mcp`, and
 `sessions/sqlite` are implemented migration targets. Remaining known gaps are

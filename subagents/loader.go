@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/internal/frontmatter"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/internal/frontmatter"
 )
 
 type Definition struct {

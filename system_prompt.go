@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 const identityBlock = `You are skawld, an autonomous software engineering agent. You work inside a codebase on the user's computer, using the file and shell tools provided to read, modify, and run code. Your goal is to complete the user's coding task correctly and minimally.

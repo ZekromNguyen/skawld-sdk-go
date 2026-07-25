@@ -101,7 +101,7 @@ skawld-sdk-go/
 
 | Current path | Target | Compatibility note |
 |---|---|---|
-| `sessions/` | `memory/inmem/` | Breaks `github.com/skawld/skawld-sdk-go/sessions`. Keep alias package in v1. |
+| `sessions/` | `memory/inmem/` | Breaks `github.com/ZekromNguyen/skawld-sdk-go/sessions`. Keep alias package in v1. |
 | `sessions/sqlite/` | `memory/sqlite/` | Breaks SQLite import path. Keep alias package in v1. |
 | `permissions/` | `middleware/permissions/` | Breaks public rules package. Keep current path unless v2. |
 | `tools/mcp/` | `transport/mcp/` plus `tools/mcp/` adapter | Split client transport from tool adapter gradually. |
@@ -118,7 +118,7 @@ standard for package unit tests.
 
 ## 4. Package Refactoring Plan
 
-- Keep `github.com/skawld/skawld-sdk-go` as the primary SDK facade. This is the
+- Keep `github.com/ZekromNguyen/skawld-sdk-go` as the primary SDK facade. This is the
   idiomatic layout for a single-library Go module.
 - Keep `core` small and stable. Long term, split storage models into `memory`
   only if `core` becomes a dumping ground.

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
 
 type RunImage struct {

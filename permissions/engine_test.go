@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 const testProjectRoot = "/repo"

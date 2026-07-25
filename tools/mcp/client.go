@@ -14,8 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	internalsse "github.com/skawld/skawld-sdk-go/internal/sse"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	internalsse "github.com/ZekromNguyen/skawld-sdk-go/internal/sse"
 )
 
 type Manager struct {

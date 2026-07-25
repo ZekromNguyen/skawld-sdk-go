@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/sessions"
-	"github.com/skawld/skawld-sdk-go/subagents"
-	"github.com/skawld/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/sessions"
+	"github.com/ZekromNguyen/skawld-sdk-go/subagents"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
 
 func subagentListingPrompt(defs []subagents.Definition) string {

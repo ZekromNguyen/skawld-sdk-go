@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	skawld "github.com/skawld/skawld-sdk-go"
-	"github.com/skawld/skawld-sdk-go/config"
-	"github.com/skawld/skawld-sdk-go/core"
-	"github.com/skawld/skawld-sdk-go/sessions"
-	"github.com/skawld/skawld-sdk-go/tools"
-	"github.com/skawld/skawld-sdk-go/tools/mcp"
+	skawld "github.com/ZekromNguyen/skawld-sdk-go"
+	"github.com/ZekromNguyen/skawld-sdk-go/config"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/sessions"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools/mcp"
 )
 
 type apiProvider struct{}

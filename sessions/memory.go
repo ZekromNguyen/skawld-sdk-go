@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skawld/skawld-sdk-go/core"
-	idgen "github.com/skawld/skawld-sdk-go/internal/id"
-	"github.com/skawld/skawld-sdk-go/internal/jsoncopy"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	idgen "github.com/ZekromNguyen/skawld-sdk-go/internal/id"
+	"github.com/ZekromNguyen/skawld-sdk-go/internal/jsoncopy"
 )
 
 type InMemoryStore struct {

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/skawld/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
 func BenchmarkEstimateProviderTokens(b *testing.B) {

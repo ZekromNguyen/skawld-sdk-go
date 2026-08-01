@@ -20,6 +20,7 @@ env:
   GO_VERSION_FILE: go.mod
   GOPROXY: https://proxy.golang.org,direct
   GOSUMDB: sum.golang.org
+  COVERAGE_MINIMUM: "55.0"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -51,6 +52,31 @@ jobs:
 
       - name: go vet ./...
         run: go vet ./...
+
+  security:
+    name: Security (govulncheck + staticcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up supported security toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: Install pinned analyzers
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install honnef.co/go/tools/cmd/staticcheck@2026.1
+
+      - name: Scan reachable vulnerabilities
+        run: govulncheck ./...
+
+      - name: Run static analysis
+        run: staticcheck ./...
 
   # ---------------------------------------------------------------------------
   # 2. Build matrix: verify the module compiles on every supported OS/arch.
@@ -166,7 +192,10 @@ jobs:
 
       - name: Summarise coverage
         run: |
-          go tool cover -func=coverage.out | tail -n 1
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')
+          echo "Total coverage: ${total}% (minimum ${COVERAGE_MINIMUM}%)"
+          awk -v total="$total" -v minimum="$COVERAGE_MINIMUM" \
+            'BEGIN { if ((total + 0) < (minimum + 0)) exit 1 }'
 
       - name: Upload coverage to Codecov
         if: ${{ secrets.CODECOV_TOKEN != '' }}
@@ -185,7 +214,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, build, test-linux, test-windows, coverage]
+    needs: [lint, security, build, test-linux, test-windows, coverage]
     if: always()
     timeout-minutes: 2
     steps:
@@ -193,6 +222,7 @@ jobs:
         run: |
           {
             echo "needs.lint.result=${{ needs.lint.result }}"
+            echo "needs.security.result=${{ needs.security.result }}"
             echo "needs.build.result=${{ needs.build.result }}"
             echo "needs.test-linux.result=${{ needs.test-linux.result }}"
             echo "needs.test-windows.result=${{ needs.test-windows.result }}"
@@ -202,23 +232,17 @@ jobs:
           failed=0
           for status in \
             "${{ needs.lint.result }}" \
+            "${{ needs.security.result }}" \
+            "${{ needs.build.result }}" \
             "${{ needs.test-linux.result }}" \
-            "${{ needs.test-windows.result }}"; do
-            if [ "$status" != "success" ] && [ "$status" != "skipped" ]; then
+            "${{ needs.test-windows.result }}" \
+            "${{ needs.coverage.result }}"; do
+            if [ "$status" != "success" ]; then
               echo "Required job reported status '$status'."
               failed=1
             fi
-          done
-          # `build` and `coverage` are reported as a single matrix result
-          # string with commas; treat anything other than all-success as bad.
-          for status in "${{ needs.build.result }}" "${{ needs.coverage.result }}"; do
-            case "$status" in
-              ""|success|skipped) ;;
-              *) echo "Required job reported status '$status'."; failed=1 ;;
-            esac
           done
           if [ "$failed" = "1" ]; then
             exit 1
           fi
           echo "All required jobs succeeded."
-

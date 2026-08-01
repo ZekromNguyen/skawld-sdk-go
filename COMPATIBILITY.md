@@ -4,6 +4,71 @@ This document tracks public API changes made during the production hardening
 phases (Sprints 9–14). Refer to this when upgrading from a pre-hardening SDK
 version.
 
+## Post-v0.2 production P1 corrections
+
+`NewProductionExecutor` now requires its protected execution store to
+implement `workflow.ExecutionTransitionStore` and to confirm
+`AtomicWith(ExecutorOptions.AuditOutbox)`. The built-in SQLite adapters satisfy
+this when both values come from the same `storage/sqlite.Store`. Custom
+production stores must commit an execution create/update and the supplied
+audit events in one transaction. Development-mode `NewExecutor` remains
+compatible with ordinary `ExecutionStore` implementations.
+
+`workflow.Coordinator` now requires `workflow.ReadyExecutionClaimer`.
+Distributed store adapters must filter live leases before applying the batch
+limit and atomically fence the selected ready executions.
+
+Custom compaction strategies continue to receive `CompactionRequest.Provider`,
+but in production that provider is now a guarded wrapper. Strategies must use
+the supplied provider rather than retaining an out-of-band provider reference.
+
+## Post-v0.2 production hardening P2
+
+Production agent tools now require a non-empty, structurally valid input schema
+in addition to the P1 output-schema requirement. The runtime validates
+normalized inputs against that schema before policy evaluation and again
+immediately before execution. Production permission/approval callbacks may
+return an equivalent normalized input, but cannot change an invocation after
+the hard policy has authorized it. Development-mode permission rewriting is
+unchanged.
+
+Production token accounting now includes cache-read tokens, rejects negative or
+overflowing provider usage, checks the cumulative budget before persisting the
+assistant response, and clamps each request to the remaining run allowance.
+Applications that intentionally excluded cache reads from `MaxTotalTokens`
+must increase that limit.
+
+`sessions.ProtectedStore` now writes version 2 envelopes authenticated against
+tenant, actor, session ID, and payload purpose. P1 protected envelopes were
+never part of a tagged release; any pre-release P1 databases must be exported
+through the matching code revision and re-imported rather than opened as P2.
+
+## Post-v0.2 production hardening P1
+
+`NewProductionAgent` now requires `core.ProtectedSessionStore`, not only a
+durable store. Wrap a durable adapter with `sessions.NewProtectedStore` and a
+tenant-bound `storage.DocumentProtector`. Development-mode `NewAgent` remains
+unchanged. The protected decorator refuses legacy plaintext session records;
+migration must be explicit.
+
+`RuntimeLimits` adds required production limits for provider-event count and
+per-turn output tokens. Production clamps `ProviderRequest.MaxOutputTokens`
+to the configured per-turn ceiling.
+
+Production agent tools now require a non-empty output schema. Lazy tool
+contracts are revalidated before a run and before execution. Production mode
+disables skills unless `ProductionOptions.AllowSkills` is true, disables
+subagents, and rejects direct MCP configuration.
+
+`NewProductionExecutor` now requires protected capability markers for its
+execution store, approval store, and audit outbox. The built-in workflow
+SQLite adapters claim those markers only when a protector is configured and
+`AllowUnprotectedReads` is disabled.
+
+Provider streams in production must close with `message_end` and follow valid
+tool-use lifecycle ordering. Development mode retains the tolerant legacy
+translation behavior.
+
 ## Workflow operational safety P1
 
 `workflow.Execution` now persists an optional `DeadlineAt` and supports the

@@ -445,6 +445,10 @@ areas still in progress:
 - Permissions/tool parity rollups for remaining TypeScript fixtures
 - Live provider and MCP release smoke tests
 
+Production embeddings should use the fail-closed constructors and operational
+guidance in [`docs/PRODUCTION.md`](docs/PRODUCTION.md). Development constructors
+intentionally preserve compatibility defaults.
+
 ## License
 
 MIT

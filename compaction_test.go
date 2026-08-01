@@ -7,9 +7,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/ZekromNguyen/skawld-sdk-go/audit"
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/policy"
 	"github.com/ZekromNguyen/skawld-sdk-go/sessions"
+	"github.com/ZekromNguyen/skawld-sdk-go/tools"
 )
 
 type recordingCompactionProvider struct {
@@ -373,5 +377,201 @@ func TestContextLengthErrorForcesOneCompactionRetry(t *testing.T) {
 	}
 	if !isCompactionSummary(provider.requests[2].Messages[0]) {
 		t.Fatal("expected retry request to use compacted provider view")
+	}
+}
+
+type productionCompactionTestProvider struct {
+	mu       sync.Mutex
+	requests []core.ProviderRequest
+	summary  string
+}
+
+func (*productionCompactionTestProvider) ID() string {
+	return "production-compaction"
+}
+
+func (*productionCompactionTestProvider) ContextWindow(core.ModelID) int {
+	return 160
+}
+
+func (p *productionCompactionTestProvider) Stream(
+	ctx context.Context,
+	req core.ProviderRequest,
+) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult, 4)
+	p.mu.Lock()
+	p.requests = append(p.requests, req)
+	p.mu.Unlock()
+	go func() {
+		defer close(out)
+		out <- core.ProviderStreamResult{Event: core.ProviderStreamEvent{
+			Type: "message_start", Model: req.Model,
+		}}
+		if len(req.Messages) == 1 &&
+			strings.Contains(
+				req.Messages[0].Content[0].Text,
+				"Earlier conversation:",
+			) {
+			out <- core.ProviderStreamResult{
+				Event: core.ProviderStreamEvent{
+					Type: "text_delta", Text: p.summary,
+				},
+			}
+			out <- core.ProviderStreamResult{
+				Event: core.ProviderStreamEvent{
+					Type:       "message_end",
+					StopReason: core.StopEndTurn,
+					Usage: core.Usage{
+						InputTokens: 3, OutputTokens: 2,
+					},
+				},
+			}
+			return
+		}
+		out <- core.ProviderStreamResult{Event: core.ProviderStreamEvent{
+			Type: "text_delta", Text: "done",
+		}}
+		out <- core.ProviderStreamResult{Event: core.ProviderStreamEvent{
+			Type: "message_end", StopReason: core.StopEndTurn,
+			Usage: core.Usage{InputTokens: 4, OutputTokens: 1},
+		}}
+	}()
+	return out
+}
+
+func newProductionCompactionTestAgent(
+	t *testing.T,
+	provider core.Provider,
+	limits RuntimeLimits,
+) (*Agent, core.Principal) {
+	t.Helper()
+	principal := core.Principal{
+		TenantID: "tenant-a", ActorID: "actor-a",
+	}
+	agent, err := NewProductionAgent(AgentOptions{
+		Provider: provider, Model: "test",
+		Tools: tools.NewRegistry(),
+		SessionStore: durableTestSessionStore{
+			InMemoryStore: sessions.NewInMemoryStore(),
+		},
+		Principal:           principal,
+		CompactionThreshold: 0.01,
+		Production: &ProductionOptions{
+			Policy: fixedAgentPolicy{
+				decision: policy.Decision{Kind: policy.Allow},
+			},
+			AuditOutbox: durableTestOutbox{
+				MemoryOutbox: audit.NewMemoryOutbox(),
+			},
+			Limits: limits,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agent, principal
+}
+
+func appendProductionCompactionHistory(
+	t *testing.T,
+	ctx context.Context,
+	session *Session,
+) {
+	t.Helper()
+	for index := 0; index < 12; index++ {
+		if err := session.append(ctx, []core.Message{
+			{
+				Role: "user",
+				Content: []core.ContentBlock{
+					core.Text(strings.Repeat("old user ", 12)),
+				},
+			},
+			{
+				Role: "assistant",
+				Content: []core.ContentBlock{
+					core.Text(strings.Repeat("old assistant ", 12)),
+				},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestProductionCompactionIsBudgetedAndUsageIsAccounted(
+	t *testing.T,
+) {
+	provider := &productionCompactionTestProvider{
+		summary: "bounded summary",
+	}
+	limits := productionLimitsForTest()
+	limits.MaxOutputTokensPerTurn = 7
+	agent, principal := newProductionCompactionTestAgent(
+		t, provider, limits,
+	)
+	defer agent.Close()
+	ctx := core.WithPrincipal(context.Background(), principal)
+	session, err := agent.Session(ctx, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendProductionCompactionHistory(t, ctx, session)
+	var total core.Usage
+	for event := range session.Run(ctx, "continue", RunOptions{}) {
+		if event.Type == core.EventResult {
+			total = event.TotalUsage
+		}
+	}
+	if total.InputTokens != 7 || total.OutputTokens != 3 {
+		t.Fatalf("run usage = %+v, want compaction plus main turn", total)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.requests) < 2 ||
+		provider.requests[0].MaxOutputTokens == nil ||
+		*provider.requests[0].MaxOutputTokens != 7 {
+		t.Fatalf(
+			"compaction request was not clamped: %+v",
+			provider.requests,
+		)
+	}
+}
+
+func TestProductionCompactionRejectsOversizedProviderResponse(
+	t *testing.T,
+) {
+	provider := &productionCompactionTestProvider{
+		summary: strings.Repeat("x", 2048),
+	}
+	limits := productionLimitsForTest()
+	limits.MaxProviderResponseBytes = 256
+	limits.MaxRunDuration = time.Second
+	agent, principal := newProductionCompactionTestAgent(
+		t, provider, limits,
+	)
+	defer agent.Close()
+	ctx := core.WithPrincipal(context.Background(), principal)
+	session, err := agent.Session(ctx, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendProductionCompactionHistory(t, ctx, session)
+	var failed bool
+	for event := range session.Run(ctx, "continue", RunOptions{}) {
+		if event.Type == core.EventResult &&
+			event.Subtype == "error" {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatal("oversized compaction response was accepted")
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if len(provider.requests) != 1 {
+		t.Fatalf(
+			"main provider turn ran after compaction failure: %d calls",
+			len(provider.requests),
+		)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/version"
 )
 
 const identityBlock = `You are skawld, an autonomous software engineering agent. You work inside a codebase on the user's computer, using the file and shell tools provided to read, modify, and run code. Your goal is to complete the user's coding task correctly and minimally.
@@ -25,8 +26,8 @@ const toolProtocolBlock = `Tool use protocol and trust boundaries:
 - Use TaskCreate, TaskList, TaskGet, and TaskUpdate to track multi-step work.`
 
 func buildSystemBlocks(cwd string, mode core.PermissionMode, toolNames []string, userInstructions string) []core.SystemBlock {
-	env := fmt.Sprintf("Environment:\n\n- skawld-go version: 0.1.0\n- Go: %s\n- OS: %s/%s\n- Working directory: %s\n- Permission mode: %s\n- Tools available: %s",
-		runtime.Version(), runtime.GOOS, runtime.GOARCH, cwd, mode, strings.Join(toolNames, ", "))
+	env := fmt.Sprintf("Environment:\n\n- skawld-go version: %s\n- Go: %s\n- OS: %s/%s\n- Working directory: %s\n- Permission mode: %s\n- Tools available: %s",
+		version.String(), runtime.Version(), runtime.GOOS, runtime.GOARCH, cwd, mode, strings.Join(toolNames, ", "))
 	blocks := []core.SystemBlock{
 		{Type: "text", Text: identityBlock, Cacheable: true},
 		{Type: "text", Text: toolProtocolBlock, Cacheable: true},

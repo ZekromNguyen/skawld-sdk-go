@@ -13,8 +13,7 @@ func SplitArguments(input string) ([]string, error) {
 	var quote rune
 	inToken := false
 	escaped := false
-	runes := []rune(input)
-	for _, ch := range runes {
+	for _, ch := range input {
 		if escaped {
 			current.WriteRune(ch)
 			inToken = true

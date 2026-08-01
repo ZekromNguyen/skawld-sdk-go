@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
@@ -39,6 +40,281 @@ type CompactionRequest struct {
 type CompactionResult struct {
 	Messages []core.Message
 	Changed  bool
+}
+
+// productionCompactionProvider applies the same fail-closed provider
+// boundaries used by normal production turns to provider calls made by a
+// compaction strategy. Usage is accumulated across every stream opened by one
+// compaction attempt.
+type productionCompactionProvider struct {
+	provider  core.Provider
+	limits    RuntimeLimits
+	remaining int
+
+	mu    sync.Mutex
+	usage core.Usage
+}
+
+func newProductionCompactionProvider(
+	provider core.Provider,
+	limits RuntimeLimits,
+	used core.Usage,
+) (*productionCompactionProvider, error) {
+	usedTokens, err := usageTokenCount(used)
+	if err != nil {
+		return nil, err
+	}
+	remaining := limits.MaxTotalTokens - usedTokens
+	if remaining <= 0 {
+		return nil, &core.SkawldError{
+			Kind: core.ErrorValidation,
+			Message: fmt.Sprintf(
+				"run exhausted production token limit of %d",
+				limits.MaxTotalTokens,
+			),
+		}
+	}
+	return &productionCompactionProvider{
+		provider: provider, limits: limits, remaining: remaining,
+	}, nil
+}
+
+func (p *productionCompactionProvider) ID() string {
+	return p.provider.ID()
+}
+
+func (p *productionCompactionProvider) ContextWindow(
+	model core.ModelID,
+) int {
+	return p.provider.ContextWindow(model)
+}
+
+func (p *productionCompactionProvider) Usage() core.Usage {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.usage
+}
+
+func (p *productionCompactionProvider) Stream(
+	ctx context.Context,
+	req core.ProviderRequest,
+) core.ProviderStream {
+	limit := p.limits.MaxOutputTokensPerTurn
+	p.mu.Lock()
+	used, err := usageTokenCount(p.usage)
+	remaining := p.remaining - used
+	p.mu.Unlock()
+	if err != nil {
+		return compactionErrorStream(err)
+	}
+	if remaining <= 0 {
+		return compactionErrorStream(&core.SkawldError{
+			Kind:    core.ErrorValidation,
+			Message: "compaction exhausted the remaining production token budget",
+		})
+	}
+	if remaining < limit {
+		limit = remaining
+	}
+	if req.MaxOutputTokens == nil || *req.MaxOutputTokens <= 0 ||
+		*req.MaxOutputTokens > limit {
+		req.MaxOutputTokens = &limit
+	}
+	stream, err := core.StreamProvider(ctx, p.provider, req)
+	if err != nil {
+		return compactionErrorStream(err)
+	}
+	out := make(chan core.ProviderStreamResult)
+	go p.guardStream(ctx, stream, out)
+	return out
+}
+
+func (p *productionCompactionProvider) guardStream(
+	ctx context.Context,
+	stream core.ProviderStream,
+	out chan<- core.ProviderStreamResult,
+) {
+	defer close(out)
+	events := 0
+	responseBytes := 0
+	started := false
+	ended := false
+	for result := range stream {
+		if result.Err != nil {
+			sendCompactionStreamResult(ctx, out, result)
+			return
+		}
+		event := result.Event
+		events++
+		if events > p.limits.MaxProviderEvents {
+			sendCompactionStreamResult(ctx, out, core.ProviderStreamResult{
+				Err: &core.SkawldError{
+					Kind: core.ErrorProvider,
+					Message: fmt.Sprintf(
+						"compaction provider stream exceeds production limit of %d events",
+						p.limits.MaxProviderEvents,
+					),
+				},
+			})
+			return
+		}
+		metadataSize := 0
+		if !event.ProviderMetadata.Empty() {
+			encoded, err := json.Marshal(event.ProviderMetadata)
+			if err != nil {
+				sendCompactionStreamResult(
+					ctx, out, core.ProviderStreamResult{
+						Err: providerProtocolError(
+							"compaction provider metadata is not JSON serializable",
+						),
+					},
+				)
+				return
+			}
+			metadataSize = len(encoded)
+		}
+		responseBytes += 32 + len(event.Type) + len(event.ID) +
+			len(event.Name) + len(event.Text) + len(event.Signature) +
+			len(event.JSONDelta) + len(event.Model) +
+			len(event.StopReason) + metadataSize
+		if responseBytes > p.limits.MaxProviderResponseBytes {
+			sendCompactionStreamResult(ctx, out, core.ProviderStreamResult{
+				Err: &core.SkawldError{
+					Kind: core.ErrorProvider,
+					Message: fmt.Sprintf(
+						"compaction provider response exceeds production limit of %d bytes",
+						p.limits.MaxProviderResponseBytes,
+					),
+				},
+			})
+			return
+		}
+		if ended {
+			sendCompactionStreamResult(ctx, out, core.ProviderStreamResult{
+				Err: providerProtocolError(
+					"compaction provider emitted data after message_end",
+				),
+			})
+			return
+		}
+		switch event.Type {
+		case "message_start":
+			if started {
+				sendCompactionStreamResult(
+					ctx, out, core.ProviderStreamResult{
+						Err: providerProtocolError(
+							"compaction provider emitted message_start more than once",
+						),
+					},
+				)
+				return
+			}
+			started = true
+		case "text_delta":
+			if !started {
+				sendCompactionStreamResult(
+					ctx, out, core.ProviderStreamResult{
+						Err: providerProtocolError(
+							"compaction provider emitted text before message_start",
+						),
+					},
+				)
+				return
+			}
+		case "message_end":
+			if !started {
+				sendCompactionStreamResult(
+					ctx, out, core.ProviderStreamResult{
+						Err: providerProtocolError(
+							"compaction provider ended before message_start",
+						),
+					},
+				)
+				return
+			}
+			if event.StopReason != "" &&
+				event.StopReason != core.StopEndTurn {
+				sendCompactionStreamResult(
+					ctx, out, core.ProviderStreamResult{
+						Err: providerProtocolError(
+							"compaction provider returned an invalid stop reason",
+						),
+					},
+				)
+				return
+			}
+			if err := p.recordUsage(event.Usage); err != nil {
+				sendCompactionStreamResult(
+					ctx, out, core.ProviderStreamResult{Err: err},
+				)
+				return
+			}
+			ended = true
+		default:
+			sendCompactionStreamResult(ctx, out, core.ProviderStreamResult{
+				Err: providerProtocolError(
+					"compaction provider emitted an unsupported stream event",
+				),
+			})
+			return
+		}
+		if !sendCompactionStreamResult(ctx, out, result) {
+			return
+		}
+	}
+	if !ended {
+		sendCompactionStreamResult(ctx, out, core.ProviderStreamResult{
+			Err: providerProtocolError(
+				"compaction provider stream ended before message_end",
+			),
+		})
+	}
+}
+
+func (p *productionCompactionProvider) recordUsage(
+	usage core.Usage,
+) error {
+	if _, err := usageTokenCount(usage); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	next, err := addUsageChecked(p.usage, usage)
+	if err != nil {
+		return err
+	}
+	count, err := usageTokenCount(next)
+	if err != nil {
+		return err
+	}
+	if count > p.remaining {
+		p.usage = next
+		return providerProtocolError(
+			"compaction provider reported usage above the remaining production token limit",
+		)
+	}
+	p.usage = next
+	return nil
+}
+
+func compactionErrorStream(err error) core.ProviderStream {
+	out := make(chan core.ProviderStreamResult, 1)
+	out <- core.ProviderStreamResult{Err: err}
+	close(out)
+	return out
+}
+
+func sendCompactionStreamResult(
+	ctx context.Context,
+	out chan<- core.ProviderStreamResult,
+	result core.ProviderStreamResult,
+) bool {
+	select {
+	case out <- result:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 type KeepLastTurnsCompactionStrategy struct {

@@ -116,14 +116,13 @@ func TestBashToolExecuteTimeout(t *testing.T) {
 	tool := BashTool{}
 	ctx := makeCtx(os.TempDir())
 
-	input, _ := tool.Validate(map[string]interface{}{"command": "sleep 5", "timeout_ms": 200})
 	// sleep isn't natively on windows cmd either. But powershell has Start-Sleep.
 	// Let's use powershell -c start-sleep 5 on windows or sleep 5
 	cmd := "sleep 5"
 	if os.PathSeparator == '\\' {
 		cmd = "ping 127.0.0.1 -n 6 > nul"
 	}
-	input, _ = tool.Validate(map[string]interface{}{"command": cmd, "timeout_ms": 200})
+	input, _ := tool.Validate(map[string]interface{}{"command": cmd, "timeout_ms": 200})
 	res, _ := tool.Execute(input, ctx)
 
 	if !res.IsError {

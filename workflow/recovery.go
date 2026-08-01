@@ -126,6 +126,11 @@ func (e *Executor) Recover(
 	}
 	switch request.Decision {
 	case RecoveryConfirmedCompleted:
+		if err := e.validateToolOutputSize(
+			step.Tool.Name, request.Output,
+		); err != nil {
+			return checkpoint, err
+		}
 		if err := ValidateOutput(
 			descriptor.OutputSchema, request.Output, step.Tool.Name,
 		); err != nil {
@@ -148,12 +153,14 @@ func (e *Executor) Recover(
 		checkpoint.Status = ExecutionRunning
 		checkpoint.Error = nil
 		checkpoint.NextStep++
-		if err := e.checkpoint(ctx, &checkpoint); err != nil {
-			return checkpoint, err
-		}
-		if err := e.emit(
-			ctx, checkpoint, audit.EventExecutionRecovered, step.ID,
-			step.Tool.Name, "", "confirmed_completed", attributes,
+		if err := e.checkpointWithEvents(
+			ctx, &checkpoint,
+			auditEventSpec{
+				eventType: audit.EventExecutionRecovered,
+				stepID:    step.ID, toolName: step.Tool.Name,
+				outcome:    "confirmed_completed",
+				attributes: attributes,
+			},
 		); err != nil {
 			return checkpoint, err
 		}
@@ -163,12 +170,14 @@ func (e *Executor) Recover(
 		checkpoint.Error = nil
 		run.Status = StepRunning
 		run.Error = nil
-		if err := e.checkpoint(ctx, &checkpoint); err != nil {
-			return checkpoint, err
-		}
-		if err := e.emit(
-			ctx, checkpoint, audit.EventExecutionRecovered, step.ID,
-			step.Tool.Name, "", "confirmed_not_executed", attributes,
+		if err := e.checkpointWithEvents(
+			ctx, &checkpoint,
+			auditEventSpec{
+				eventType: audit.EventExecutionRecovered,
+				stepID:    step.ID, toolName: step.Tool.Name,
+				outcome:    "confirmed_not_executed",
+				attributes: attributes,
+			},
 		); err != nil {
 			return checkpoint, err
 		}
@@ -192,19 +201,20 @@ func (e *Executor) Recover(
 		run.Status = StepFailed
 		run.CompletedAt = now
 		run.Error = checkpoint.Error
-		if err := e.checkpoint(ctx, &checkpoint); err != nil {
-			return checkpoint, err
-		}
-		if err := e.emit(
-			ctx, checkpoint, audit.EventExecutionRecovered, step.ID,
-			step.Tool.Name, "", outcome, attributes,
+		if err := e.checkpointWithEvents(
+			ctx, &checkpoint,
+			auditEventSpec{
+				eventType: audit.EventExecutionRecovered,
+				stepID:    step.ID, toolName: step.Tool.Name,
+				outcome: outcome, attributes: attributes,
+			},
+			auditEventSpec{
+				eventType: audit.EventExecutionEnded,
+				outcome:   string(status),
+			},
 		); err != nil {
 			return checkpoint, err
 		}
-		_ = e.emit(
-			ctx, checkpoint, audit.EventExecutionEnded, "", "", "",
-			string(status), nil,
-		)
 		return checkpoint, nil
 	default:
 		return checkpoint, &ExecutionError{

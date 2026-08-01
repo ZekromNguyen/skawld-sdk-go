@@ -115,8 +115,12 @@ func (l *Lifecycle) SaveRoute(
 		if previousRevision > 0 {
 			outcome = "updated"
 		}
+		eventID, err := id.New()
+		if err != nil {
+			return saved, err
+		}
 		if err := l.audit.Append(ctx, audit.Event{
-			ID: id.New(), Type: audit.EventRouteChanged, Timestamp: l.now(),
+			ID: eventID, Type: audit.EventRouteChanged, Timestamp: l.now(),
 			TenantID: principal.TenantID, ActorID: principal.ActorID,
 			WorkflowID: saved.WorkflowID, WorkflowVersion: version.Version,
 			Outcome: outcome, Attributes: map[string]interface{}{
@@ -162,8 +166,12 @@ func (l *Lifecycle) DeleteRoute(
 		return err
 	}
 	if l.audit != nil {
+		eventID, err := id.New()
+		if err != nil {
+			return err
+		}
 		if err := l.audit.Append(ctx, audit.Event{
-			ID: id.New(), Type: audit.EventRouteChanged, Timestamp: l.now(),
+			ID: eventID, Type: audit.EventRouteChanged, Timestamp: l.now(),
 			TenantID: principal.TenantID, ActorID: principal.ActorID,
 			WorkflowID: route.WorkflowID, Outcome: "deleted",
 			Attributes: map[string]interface{}{
@@ -217,8 +225,12 @@ func (l *Lifecycle) RecordFeedback(
 		return workflow.ExecutionFeedback{}, err
 	}
 	if l.audit != nil {
+		eventID, err := id.New()
+		if err != nil {
+			return feedback, err
+		}
 		if err := l.audit.Append(ctx, audit.Event{
-			ID: id.New(), Type: audit.EventFeedbackRecorded, Timestamp: l.now(),
+			ID: eventID, Type: audit.EventFeedbackRecorded, Timestamp: l.now(),
 			TenantID: principal.TenantID, ActorID: principal.ActorID,
 			ExecutionID: execution.ID, WorkflowID: execution.WorkflowID,
 			WorkflowVersion: execution.WorkflowVersion, StepID: feedback.StepID,
@@ -365,8 +377,12 @@ func (l *Lifecycle) Review(
 		return workflow.Review{}, err
 	}
 	if l.audit != nil {
+		eventID, err := id.New()
+		if err != nil {
+			return review, err
+		}
 		if err := l.audit.Append(ctx, audit.Event{
-			ID: id.New(), Type: audit.EventWorkflowReviewed, Timestamp: l.now(),
+			ID: eventID, Type: audit.EventWorkflowReviewed, Timestamp: l.now(),
 			TenantID: principal.TenantID, ActorID: principal.ActorID,
 			WorkflowID: workflowID, WorkflowVersion: version,
 			Outcome: string(decision), Attributes: map[string]interface{}{

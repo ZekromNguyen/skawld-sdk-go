@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- Closed production P1 trust-boundary gaps: compaction now shares provider
+  protocol and budget enforcement with normal turns and contributes to total
+  usage; permission callbacks and validators receive isolated tool-input
+  copies; workflow coordinators atomically claim lease-ready work before
+  applying batch limits; and SQLite commits workflow checkpoints with their
+  audit-outbox events in one transaction.
+
+- Added P2 production integrity controls: encrypted session envelopes are
+  authenticated against tenant, actor, session, and payload purpose; production
+  tools require valid trusted input/output schemas; post-policy input mutation
+  is rejected; and provider usage accounting is non-negative, overflow-safe,
+  cache-aware, and clamped to the remaining run budget.
+- Added P1 production defense-in-depth: tenant-bound protected session
+  storage, direct store actor isolation, dynamic tool-contract revalidation,
+  strict provider-stream protocol and event budgets, per-turn output-token
+  clamping, trusted output-schema requirements, and content-free audit and
+  workflow worker health snapshots.
+- Added fail-closed production constructors for agent and workflow runtimes,
+  explicit durable-store marker contracts, strict session ownership, hard
+  agent policy enforcement, runtime budgets, and agent tool-output validation.
+- Added a leased durable workflow coordinator that resumes authoritative
+  checkpoints and moves interrupted side-effecting tools to explicit recovery
+  instead of replaying them.
+- Removed predictable timestamp ID fallback, centralized build version
+  reporting, enforced coverage/security analysis in CI, and added automated
+  cross-platform releases with checksums, CycloneDX SBOMs, and GitHub
+  provenance attestations.
+
 ## v0.2.0 - 2026-07-26
 
 - Changed the Go module path to `github.com/ZekromNguyen/skawld-sdk-go`.

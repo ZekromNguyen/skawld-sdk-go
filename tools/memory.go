@@ -208,7 +208,13 @@ func (t SessionSearchTool) Execute(input map[string]interface{}, ctx core.ToolCo
 	}
 	visible := make([]core.SessionRecord, 0, len(sessions))
 	for _, session := range sessions {
-		if !core.CanAccessSession(principal, session.Meta) {
+		canAccess := core.CanAccessSession(principal, session.Meta)
+		if ctx.StrictSessionIdentity {
+			canAccess = core.CanAccessSessionStrict(
+				principal, session.Meta,
+			)
+		}
+		if !canAccess {
 			continue
 		}
 		visible = append(visible, session)

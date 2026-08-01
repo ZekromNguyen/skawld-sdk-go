@@ -44,6 +44,18 @@ func TestProtectedSQLiteDocumentsAreEncryptedAndReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	executions, ok := store.Executions().(workflow.ProtectedExecutionStore)
+	if !ok || !executions.Protected() {
+		t.Fatal("protected execution-store capability was not exposed")
+	}
+	approvals, ok := store.Approvals().(policy.ProtectedApprovalStore)
+	if !ok || !approvals.Protected() {
+		t.Fatal("protected approval-store capability was not exposed")
+	}
+	outbox, ok := store.AuditOutbox().(audit.ProtectedOutbox)
+	if !ok || !outbox.Protected() {
+		t.Fatal("protected audit-outbox capability was not exposed")
+	}
 	event := audit.Event{
 		ID: "protected-event", Type: audit.EventExecutionEnded,
 		Timestamp: time.Now().UTC(), TenantID: principal.TenantID,
@@ -111,6 +123,31 @@ func TestProtectedSQLiteDocumentsAreEncryptedAndReadable(t *testing.T) {
 		Options{RequireProtection: true},
 	); err == nil {
 		t.Fatal("expected production storage without protection to fail")
+	}
+}
+
+func TestPlainSQLiteStoresDoNotClaimProtection(t *testing.T) {
+	store, err := Open(
+		context.Background(), filepath.Join(t.TempDir(), "plain.db"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if store.Protected() {
+		t.Fatal("plaintext workflow store claimed document protection")
+	}
+	executions, ok := store.Executions().(workflow.ProtectedExecutionStore)
+	if !ok || executions.Protected() {
+		t.Fatal("plaintext execution store claimed protection")
+	}
+	approvals, ok := store.Approvals().(policy.ProtectedApprovalStore)
+	if !ok || approvals.Protected() {
+		t.Fatal("plaintext approval store claimed protection")
+	}
+	outbox, ok := store.AuditOutbox().(audit.ProtectedOutbox)
+	if !ok || outbox.Protected() {
+		t.Fatal("plaintext audit outbox claimed protection")
 	}
 }
 

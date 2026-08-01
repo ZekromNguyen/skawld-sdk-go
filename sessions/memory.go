@@ -22,6 +22,8 @@ type InMemoryStore struct {
 	taskCounters  map[string]int
 }
 
+func (*InMemoryStore) Durable() bool { return false }
+
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		sessions:      map[string]core.SessionRecord{},
@@ -39,7 +41,11 @@ func (s *InMemoryStore) Create(ctx context.Context, id string, meta map[string]i
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id == "" {
-		id = idgen.New()
+		var err error
+		id, err = idgen.New()
+		if err != nil {
+			return core.SessionRecord{}, err
+		}
 	}
 	if rec, ok := s.sessions[id]; ok {
 		return jsoncopy.SessionRecord(rec), nil

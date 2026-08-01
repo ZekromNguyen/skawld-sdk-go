@@ -13,6 +13,10 @@ type documentCodec struct {
 	allowUnprotectedReads bool
 }
 
+func (c documentCodec) protected() bool {
+	return c.protector != nil && !c.allowUnprotectedReads
+}
+
 func (c documentCodec) marshal(
 	ctx context.Context,
 	value interface{},

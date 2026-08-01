@@ -119,18 +119,21 @@ func (e *Executor) cancelCheckpoint(
 			step.Error = execution.Error
 		}
 	}
-	if err := e.checkpoint(ctx, &execution); err != nil {
+	if err := e.checkpointWithEvents(
+		ctx, &execution,
+		auditEventSpec{
+			eventType: audit.EventExecutionCanceled,
+			outcome:   outcome,
+			attributes: map[string]interface{}{
+				"error_kind": string(kind), "reason": reason,
+			},
+		},
+		auditEventSpec{
+			eventType: audit.EventExecutionEnded,
+			outcome:   outcome,
+		},
+	); err != nil {
 		return execution, err
 	}
-	_ = e.emit(
-		ctx, execution, audit.EventExecutionCanceled, "", "", "",
-		outcome, map[string]interface{}{
-			"error_kind": string(kind), "reason": reason,
-		},
-	)
-	_ = e.emit(
-		ctx, execution, audit.EventExecutionEnded, "", "", "",
-		outcome, nil,
-	)
 	return execution, nil
 }

@@ -86,9 +86,22 @@ func TestWorkerLeasesBacksOffAndDeadLetters(t *testing.T) {
 		result.DeadLettered != 0 {
 		t.Fatalf("first attempt result=%+v err=%v", result, err)
 	}
+	health := worker.Health()
+	if health.Ready || health.ConsecutiveFailures != 1 ||
+		health.LastResult.Failed != 1 ||
+		health.WorkerID != "worker-1" {
+		t.Fatalf("failed delivery health was not recorded: %+v", health)
+	}
 	result, err = worker.RunOnce(ctx)
 	if err != nil || result.Claimed != 0 {
 		t.Fatalf("event ignored backoff: result=%+v err=%v", result, err)
+	}
+	health = worker.Health()
+	if !health.Ready || health.ConsecutiveFailures != 0 ||
+		health.LastSuccessAt.IsZero() ||
+		!health.Healthy(now, time.Second) ||
+		health.Healthy(now.Add(2*time.Second), time.Second) {
+		t.Fatalf("successful poll did not restore readiness: %+v", health)
 	}
 	now = now.Add(time.Second)
 	result, err = worker.RunOnce(ctx)

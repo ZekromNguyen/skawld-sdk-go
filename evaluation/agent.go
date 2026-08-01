@@ -292,8 +292,12 @@ enqueue:
 	if err != nil {
 		return AgentReport{}, err
 	}
+	reportID, err := id.New()
+	if err != nil {
+		return AgentReport{}, err
+	}
 	report := AgentReport{
-		SchemaVersion: SchemaVersion, ID: id.New(), TenantID: principal.TenantID,
+		SchemaVersion: SchemaVersion, ID: reportID, TenantID: principal.TenantID,
 		SuiteName: suite.Name, StartedAt: startedAt, CompletedAt: r.now(),
 		Metrics: metrics, Gates: gates, Cases: caseResults,
 	}

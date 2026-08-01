@@ -195,6 +195,16 @@ func (s *AuthorizedApprovalStore) Request(
 	return s.store.Request(ctx, approval)
 }
 
+func (s *AuthorizedApprovalStore) Durable() bool {
+	store, ok := s.store.(DurableApprovalStore)
+	return ok && store.Durable()
+}
+
+func (s *AuthorizedApprovalStore) Protected() bool {
+	store, ok := s.store.(ProtectedApprovalStore)
+	return ok && store.Protected()
+}
+
 func (s *AuthorizedApprovalStore) Get(
 	ctx context.Context,
 	approvalID string,

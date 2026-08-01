@@ -1305,7 +1305,12 @@ func TestProviderErrorWrapperPreservesTypedSkawldError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := session.buildProviderRequest(context.Background(), RunOptions{}, nil)
+	req, err := session.buildProviderRequest(
+		context.Background(), RunOptions{}, nil, core.Usage{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, _, _, err = session.streamTurn(context.Background(), "run_1", req, newEventEmitter(context.Background(), nil))
 	if err == nil {
 		t.Fatal("expected provider error")

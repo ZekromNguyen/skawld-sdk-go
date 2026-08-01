@@ -145,7 +145,30 @@ func (s *Session) Run(ctx context.Context, prompt string, opts RunOptions) <-cha
 }
 
 func (s *Session) StartRun(ctx context.Context, prompt string, opts RunOptions) *RunHandle {
-	if s.Principal.Valid() {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s.agent.production() != nil {
+		authenticated, exists := core.PrincipalFromContext(ctx)
+		if !exists || !authenticated.Authenticated() {
+			return rejectedRunHandle(
+				ctx,
+				"PermissionError",
+				"production run requires an authenticated context identity",
+			)
+		}
+		if authenticated.TenantID != s.Principal.TenantID ||
+			authenticated.ActorID != s.Principal.ActorID {
+			return rejectedRunHandle(
+				ctx,
+				"PermissionError",
+				"production run identity does not match the session identity",
+			)
+		}
+		// Use the immutable trusted claims captured when the session was opened.
+		// A later caller cannot add roles by replacing the context principal.
+		ctx = core.WithPrincipal(ctx, s.Principal)
+	} else if s.Principal.Valid() {
 		ctx = core.WithPrincipal(ctx, s.Principal)
 	}
 	out := make(chan core.Event, 64)
@@ -183,6 +206,12 @@ func (s *Session) StartRun(ctx context.Context, prompt string, opts RunOptions) 
 		return handle
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	if production := s.agent.production(); production != nil {
+		cancel()
+		runCtx, cancel = context.WithTimeout(
+			ctx, production.Limits.MaxRunDuration,
+		)
+	}
 	emitCtx, cancelEmit := context.WithCancel(ctx)
 	stopAgentCancel := context.AfterFunc(s.agent.lifecycleCtx, func() {
 		cancel()
@@ -214,6 +243,39 @@ func (s *Session) StartRun(ctx context.Context, prompt string, opts RunOptions) 
 	return handle
 }
 
+func rejectedRunHandle(
+	ctx context.Context,
+	name string,
+	message string,
+) *RunHandle {
+	emitCtx, cancelEmit := context.WithCancel(ctx)
+	out := make(chan core.Event, 2)
+	done := make(chan struct{})
+	handle := &RunHandle{
+		events: out,
+		abort:  func() {},
+		close:  cancelEmit,
+		done:   done,
+	}
+	go func() {
+		defer close(done)
+		defer close(out)
+		defer cancelEmit()
+		emitter := newEventEmitter(emitCtx, out)
+		_ = emitter.Emit(core.Event{
+			Type: core.EventError,
+			Error: &core.EventErrorPayload{
+				Name: name, Message: message,
+			},
+		})
+		_ = emitter.Emit(core.Event{
+			Type: core.EventResult, Subtype: "error",
+			StopReason: core.StopError,
+		})
+	}()
+	return handle
+}
+
 func (s *Session) Abort() {
 	s.activeMu.Lock()
 	cancel := s.cancelActive
@@ -224,28 +286,50 @@ func (s *Session) Abort() {
 }
 
 func (s *Session) append(ctx context.Context, messages []core.Message) error {
+	// Hold providerMu across the budget check, the durable write, and the
+	// in-memory update so two concurrent appends cannot both pass the
+	// MaxSessionBytes check and jointly exceed the budget (TOCTOU).
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+	if production := s.agent.production(); production != nil {
+		incoming := estimateMessagesProviderChars(messages)
+		current := estimateMessagesProviderChars(s.completeHistory)
+		if current+incoming > production.Limits.MaxSessionBytes {
+			return &core.SkawldError{
+				Kind: core.ErrorValidation,
+				Message: fmt.Sprintf(
+					"session history exceeds production limit of %d bytes",
+					production.Limits.MaxSessionBytes,
+				),
+			}
+		}
+	}
 	if _, err := s.store.AppendMessages(ctx, s.ID, messages); err != nil {
 		return err
 	}
-	s.providerMu.Lock()
-	defer s.providerMu.Unlock()
 	s.providerHistory = append(s.providerHistory, messages...)
 	s.providerChars += estimateMessagesProviderChars(messages)
 	s.completeHistory = append(s.completeHistory, messages...)
 	return nil
 }
 
-func (s *Session) compactProviderHistory(ctx context.Context, runID string, trigger string, emitter *eventEmitter) (bool, error) {
+func (s *Session) compactProviderHistory(
+	ctx context.Context,
+	runID string,
+	trigger string,
+	emitter *eventEmitter,
+	used core.Usage,
+) (bool, core.Usage, error) {
 	strategy := s.agent.opts.CompactionStrategy
 	if s.agent.opts.DisableCompaction || strategy == nil {
-		return false, nil
+		return false, core.Usage{}, nil
 	}
 	system := s.agent.systemBlocks()
 	tools := s.agent.toolSchemas()
 	if trigger == compactionTriggerProactive {
 		estimated := s.estimatedProviderTokens()
 		if !s.shouldCompactProactively(estimated) {
-			return false, nil
+			return false, core.Usage{}, nil
 		}
 	}
 	s.providerMu.Lock()
@@ -254,11 +338,23 @@ func (s *Session) compactProviderHistory(ctx context.Context, runID string, trig
 	messages = stripProviderOnlyCompactionMessages(messages)
 	tokensBefore := estimateProviderTokens(system, tools, messages)
 	if trigger == compactionTriggerProactive && !s.shouldCompactProactively(tokensBefore) {
-		return false, nil
+		return false, core.Usage{}, nil
+	}
+	provider := s.agent.opts.Provider
+	var guard *productionCompactionProvider
+	if production := s.agent.production(); production != nil {
+		var err error
+		guard, err = newProductionCompactionProvider(
+			provider, production.Limits, used,
+		)
+		if err != nil {
+			return false, core.Usage{}, err
+		}
+		provider = guard
 	}
 	start := time.Now()
 	result, err := strategy.Compact(ctx, CompactionRequest{
-		Provider:        s.agent.opts.Provider,
+		Provider:        provider,
 		Model:           s.agent.opts.Model,
 		System:          system,
 		Tools:           tools,
@@ -267,6 +363,10 @@ func (s *Session) compactProviderHistory(ctx context.Context, runID string, trig
 		ContextWindow:   s.agent.opts.Provider.ContextWindow(s.agent.opts.Model),
 		EstimatedTokens: tokensBefore,
 	})
+	compactionUsage := core.Usage{}
+	if guard != nil {
+		compactionUsage = guard.Usage()
+	}
 	s.agent.observe(ctx, core.Observation{
 		Type:       core.ObservationCompaction,
 		Operation:  trigger,
@@ -277,15 +377,17 @@ func (s *Session) compactProviderHistory(ctx context.Context, runID string, trig
 		Error:      err,
 	})
 	if err != nil {
-		return false, fmt.Errorf("compact provider view for session %q: %w", s.ID, err)
+		return false, compactionUsage, fmt.Errorf(
+			"compact provider view for session %q: %w", s.ID, err,
+		)
 	}
 	if !result.Changed {
-		return false, nil
+		return false, compactionUsage, nil
 	}
 	next := stripProviderOnlyCompactionMessages(cloneMessages(result.Messages))
 	skills, err := s.loadInvokedSkills(ctx)
 	if err != nil {
-		return false, err
+		return false, compactionUsage, err
 	}
 	next = injectSkillReplayMessages(next, skills)
 	tokensAfter := estimateProviderTokens(system, tools, next)
@@ -302,9 +404,10 @@ func (s *Session) compactProviderHistory(ctx context.Context, runID string, trig
 		TokensAfter:    tokensAfter,
 		Strategy:       strategy.Name(),
 	}) {
-		return false, core.NewAbortError("run event stream closed", ctx.Err())
+		return false, compactionUsage,
+			core.NewAbortError("run event stream closed", ctx.Err())
 	}
-	return true, nil
+	return true, compactionUsage, nil
 }
 
 func (s *Session) loadInvokedSkills(ctx context.Context) ([]core.InvokedSkillRecord, error) {

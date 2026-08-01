@@ -3,6 +3,7 @@ package skills
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
@@ -17,6 +18,17 @@ func (Tool) Description() string {
 }
 func (Tool) Scope() core.ToolScope { return core.ToolScopeRead }
 func (Tool) ParallelSafe() bool    { return false }
+func (Tool) ToolDescriptor() core.ToolDescriptor {
+	return core.ToolDescriptor{
+		Risk: core.RiskLow, SideEffect: core.SideEffectNone,
+		Idempotency: core.IdempotencyNotApplicable,
+		Timeout:     5 * time.Second,
+		Permissions: []string{"skill.invoke"},
+		OutputSchema: map[string]interface{}{
+			"type": "string",
+		},
+	}
+}
 func (Tool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",

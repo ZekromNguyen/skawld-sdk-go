@@ -115,9 +115,7 @@ func getRgLines(t *testing.T, pattern string, args map[string]interface{}) []str
 			continue
 		}
 		l = filepath.ToSlash(l)
-		if strings.HasPrefix(l, prefix) {
-			l = l[len(prefix):]
-		}
+		l = strings.TrimPrefix(l, prefix)
 		cleaned = append(cleaned, l)
 	}
 	return cleaned

@@ -105,8 +105,12 @@ func (l *Lifecycle) emitApprovalDecision(
 	if l.audit == nil {
 		return nil
 	}
+	eventID, err := id.New()
+	if err != nil {
+		return err
+	}
 	if err := l.audit.Append(ctx, audit.Event{
-		ID: id.New(), Type: audit.EventApprovalDecided, Timestamp: l.now(),
+		ID: eventID, Type: audit.EventApprovalDecided, Timestamp: l.now(),
 		TenantID: principal.TenantID, ActorID: principal.ActorID,
 		ExecutionID: approval.ExecutionID, StepID: approval.StepID,
 		ToolName: approval.ToolName, ApprovalID: approval.ID,

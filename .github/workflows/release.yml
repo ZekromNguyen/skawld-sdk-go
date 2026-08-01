@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build, attest, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify tag and test
+        run: |
+          git tag --points-at HEAD | grep -Fxq "$GITHUB_REF_NAME"
+          go test -race -count=1 -timeout=10m ./...
+
+      - name: Build Raven release archives
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          for target in \
+            linux/amd64 linux/arm64 \
+            darwin/amd64 darwin/arm64 \
+            windows/amd64 windows/arm64
+          do
+            os=${target%/*}
+            arch=${target#*/}
+            name="raven_${VERSION}_${os}_${arch}"
+            binary="$name"
+            if [ "$os" = "windows" ]; then
+              binary="${name}.exe"
+            fi
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w -X github.com/ZekromNguyen/skawld-sdk-go/version.Value=${VERSION}" \
+              -o "dist/${binary}" ./cmd/raven
+            if [ "$os" = "windows" ]; then
+              (
+                cd dist
+                zip -q "${name}.zip" "$binary"
+              )
+            else
+              tar -C dist -czf "dist/${name}.tar.gz" "$binary"
+            fi
+          done
+
+      - name: Generate CycloneDX SBOM
+        uses: CycloneDX/gh-gomod-generate-sbom@v2
+        with:
+          version: v1.10.0
+          args: mod -licenses -json -output dist/sbom.cdx.json
+
+      - name: Generate checksums
+        run: |
+          find dist -maxdepth 1 -type f \
+            \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.json' \) \
+            -print0 | sort -z | xargs -0 sha256sum > dist/checksums.txt
+
+      - name: Attest release provenance and SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.tar.gz
+          sbom-path: dist/sbom.cdx.json
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/*.zip dist/*.tar.gz dist/checksums.txt dist/sbom.cdx.json \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/*.zip dist/*.tar.gz dist/checksums.txt dist/sbom.cdx.json \
+              --verify-tag --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi

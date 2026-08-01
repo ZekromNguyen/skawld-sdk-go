@@ -91,8 +91,12 @@ func NewExecutionFeedback(
 			}
 		}
 	}
+	feedbackID, err := id.New()
+	if err != nil {
+		return ExecutionFeedback{}, err
+	}
 	feedback := ExecutionFeedback{
-		SchemaVersion: SchemaVersion, ID: id.New(),
+		SchemaVersion: SchemaVersion, ID: feedbackID,
 		TenantID: execution.Principal.TenantID, ExecutionID: execution.ID,
 		WorkflowID: execution.WorkflowID, WorkflowVersion: execution.WorkflowVersion,
 		ExecutionStatus: execution.Status,

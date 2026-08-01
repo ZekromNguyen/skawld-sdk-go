@@ -21,6 +21,8 @@ type Store struct {
 	db *sql.DB
 }
 
+func (*Store) Durable() bool { return true }
+
 // Open opens or creates a SQLite session store at path.
 func Open(path string) (*Store, error) {
 	return OpenContext(context.Background(), path)
@@ -113,7 +115,11 @@ func initializeSchema(ctx context.Context, db *sql.DB) error {
 
 func (s *Store) Create(ctx context.Context, id string, meta map[string]interface{}) (core.SessionRecord, error) {
 	if id == "" {
-		id = idgen.New()
+		var err error
+		id, err = idgen.New()
+		if err != nil {
+			return core.SessionRecord{}, err
+		}
 	}
 	if meta == nil {
 		meta = map[string]interface{}{}

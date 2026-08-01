@@ -824,3 +824,78 @@ Acceptance criteria:
 - [x] Adapter payloads cannot choose a lower classification and configured
       secrets are removed before traces are stored.
 - [x] Full tests, race detection, vet, examples, and diff hygiene pass.
+
+## Phase 21: Production Runtime Defense In Depth P1
+
+Goal: close post-construction capability, sensitive session persistence,
+provider protocol, and worker-readiness gaps left after the production
+composition boundary was introduced.
+
+Status: completed on 2026-07-26.
+
+Implementation tasks:
+
+- [x] Add tenant-bound protected session storage for metadata, messages,
+      invoked skills, and task content.
+- [x] Require protected execution, approval, and audit persistence in the
+      production workflow constructor.
+- [x] Enforce exact tenant/actor authorization on direct protected-store
+      listing, reads, updates, and deletion.
+- [x] Revalidate tool descriptors after lazy runtime loading and immediately
+      before execution.
+- [x] Disable production subagents and direct MCP execution, and require an
+      explicit opt-in for trusted local skills.
+- [x] Require trusted production tool-output schemas.
+- [x] Bound and validate normalized provider stream events and tool-call
+      lifecycle state.
+- [x] Clamp every production provider request to a per-turn output-token
+      budget.
+- [x] Expose content-free readiness snapshots for audit delivery and workflow
+      coordination workers.
+
+Acceptance criteria:
+
+- [x] Sensitive session content never reaches the wrapped durable store as
+      plaintext.
+- [x] Another actor in the same tenant cannot list, load, mutate, or delete a
+      protected session.
+- [x] Lazy or mutable tool metadata cannot bypass the production contract.
+- [x] Malformed, unsupported, incomplete, or oversized provider streams fail
+      before tool execution.
+- [x] Readiness clears after an operational poll failure and recovers only
+      after a successful poll.
+
+## Phase 22: Production Data And Authorization Integrity P2
+
+Goal: prevent protected-record substitution, post-policy invocation mutation,
+and untrusted provider accounting from weakening P1 production boundaries.
+
+Status: completed on 2026-07-26.
+
+Implementation tasks:
+
+- [x] Bind encrypted session envelopes to tenant, actor, session ID, and
+      payload purpose.
+- [x] Require structurally valid trusted input and output schemas for every
+      production agent tool.
+- [x] Validate normalized tool inputs before policy evaluation and immediately
+      before execution.
+- [x] Reject production permission or approval callbacks that change an
+      already-authorized invocation.
+- [x] Reject negative, overflowing, or over-budget provider usage before
+      assistant persistence.
+- [x] Include cache-read tokens in cumulative limits and clamp each provider
+      request to the remaining run budget.
+
+Acceptance criteria:
+
+- [x] Copying protected metadata or messages between sessions fails
+      authentication even for the same actor and tenant.
+- [x] Malformed tool schemas fail production construction.
+- [x] Mutable validators and permission callbacks cannot change tool input
+      after hard-policy evaluation.
+- [x] Invalid provider usage cannot reduce or overflow the cumulative budget.
+- [x] A later turn receives only the output allowance remaining after earlier
+      usage.
+- [x] Full tests, race detection, vet, static analysis, coverage, and supported
+      cross-platform builds pass.

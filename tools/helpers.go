@@ -35,9 +35,7 @@ func numberedLines(text string, offset int) string {
 }
 
 func formatNumberedLine(line string, lineNo int) string {
-	if strings.HasSuffix(line, "\r") {
-		line = strings.TrimSuffix(line, "\r")
-	}
+	line = strings.TrimSuffix(line, "\r")
 	if len(line) > 2000 {
 		omitted := len(line) - 2000
 		line = line[:2000] + fmt.Sprintf("... (%d chars truncated)", omitted)

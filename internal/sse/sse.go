@@ -66,9 +66,7 @@ func (p *Parser) Next(ctx context.Context) (Event, bool, error) {
 			continue
 		}
 		field, value, _ := strings.Cut(line, ":")
-		if strings.HasPrefix(value, " ") {
-			value = strings.TrimPrefix(value, " ")
-		}
+		value = strings.TrimPrefix(value, " ")
 		switch field {
 		case "event":
 			p.name = value

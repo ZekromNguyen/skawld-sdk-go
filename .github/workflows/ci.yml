@@ -176,6 +176,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     timeout-minutes: 15
+    # secrets is not available inside if: conditions, so expose the token via
+    # a job-level env var and gate the upload step on the env context.
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -198,9 +202,7 @@ jobs:
             'BEGIN { if ((total + 0) < (minimum + 0)) exit 1 }'
 
       - name: Upload coverage to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out

@@ -99,6 +99,149 @@ func (s executionStore) ClaimExecution(
 	}, true, nil
 }
 
+func (s executionStore) ClaimReadyExecutions(
+	ctx context.Context,
+	request workflow.ReadyExecutionClaimRequest,
+) ([]workflow.ExecutionClaim, error) {
+	if err := validateExecutionLease(
+		request.Owner, request.Duration,
+	); err != nil {
+		return nil, err
+	}
+	if request.Limit < 1 || request.Limit > 1000 {
+		return nil, core.NewConfigError(
+			"workflow ready-claim limit must be between 1 and 1000",
+		)
+	}
+	if len(request.Statuses) == 0 {
+		return nil, core.NewConfigError(
+			"workflow ready claim requires at least one status",
+		)
+	}
+	for _, status := range request.Statuses {
+		if status != workflow.ExecutionRunning &&
+			status != workflow.ExecutionAwaitingApproval {
+			return nil, core.NewConfigError(
+				"workflow ready claim status is invalid",
+			)
+		}
+	}
+	principal, err := storageActor(ctx, "workflow execution lease")
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	query := `SELECT id, lease_token, document_json
+		FROM workflow_executions
+		WHERE tenant_id = ? AND status IN (`
+	args := []interface{}{principal.TenantID}
+	for index, status := range request.Statuses {
+		if index > 0 {
+			query += ","
+		}
+		query += "?"
+		args = append(args, status)
+	}
+	query += `) AND (
+			lease_owner = '' OR lease_until = ''
+			OR julianday(lease_until) <= julianday(?)
+		)
+		ORDER BY updated_at ASC, id
+		LIMIT ?`
+	args = append(
+		args, now.Format(time.RFC3339Nano), request.Limit,
+	)
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	type readyRow struct {
+		id        string
+		token     int64
+		execution workflow.Execution
+	}
+	ready := make([]readyRow, 0)
+	for rows.Next() {
+		var item readyRow
+		var raw []byte
+		if err := rows.Scan(&item.id, &item.token, &raw); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := s.documents.unmarshal(
+			ctx, raw, &item.execution,
+		); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ready = append(ready, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	until := now.Add(request.Duration)
+	claims := make([]workflow.ExecutionClaim, 0, len(ready))
+	for _, item := range ready {
+		token := item.token + 1
+		// Re-check status in the fencing UPDATE, not just the lease columns.
+		// A row read as ready in this transaction may have been terminalized
+		// by another worker between the SELECT and the lease assignment;
+		// claiming it would waste a slot and starve ready work.
+		updateQuery := `UPDATE workflow_executions
+				SET lease_owner = ?, lease_until = ?, lease_token = ?
+				WHERE id = ? AND tenant_id = ? AND lease_token = ?
+					AND status IN (`
+		updateArgs := []interface{}{
+			request.Owner, until.Format(time.RFC3339Nano), token,
+			item.id, principal.TenantID, item.token,
+		}
+		for index, status := range request.Statuses {
+			if index > 0 {
+				updateQuery += ","
+			}
+			updateQuery += "?"
+			updateArgs = append(updateArgs, status)
+		}
+		updateQuery += `) AND (
+				lease_owner = '' OR lease_until = ''
+				OR julianday(lease_until) <= julianday(?)
+			)`
+		updateArgs = append(
+			updateArgs, now.Format(time.RFC3339Nano),
+		)
+		result, err := tx.ExecContext(
+			ctx, updateQuery, updateArgs...,
+		)
+		if err != nil {
+			return nil, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if affected != 1 {
+			continue
+		}
+		claims = append(claims, workflow.ExecutionClaim{
+			Execution: item.execution, Owner: request.Owner,
+			Token: token, LeaseUntil: until,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
 func (s executionStore) RenewExecution(
 	ctx context.Context,
 	claim workflow.ExecutionClaim,
@@ -263,3 +406,4 @@ func parseOptionalLeaseTime(raw string) (time.Time, error) {
 }
 
 var _ workflow.ExecutionLeaseStore = executionStore{}
+var _ workflow.ReadyExecutionClaimer = executionStore{}

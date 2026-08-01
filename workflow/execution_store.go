@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ZekromNguyen/skawld-sdk-go/audit"
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
 )
 
@@ -32,6 +33,31 @@ type ExecutionStore interface {
 	List(context.Context, ExecutionFilter) ([]Execution, error)
 }
 
+type DurableExecutionStore interface {
+	ExecutionStore
+	Durable() bool
+}
+
+type ProtectedExecutionStore interface {
+	DurableExecutionStore
+	Protected() bool
+}
+
+// ExecutionTransitionStore commits an execution revision and its audit outbox
+// events as one storage transaction. Production executors require this
+// contract so durable state can never advance without the corresponding audit
+// evidence, or vice versa.
+type ExecutionTransitionStore interface {
+	ProtectedExecutionStore
+	CreateWithEvents(
+		context.Context, Execution, []audit.Event,
+	) (Execution, error)
+	UpdateWithEvents(
+		context.Context, Execution, []audit.Event,
+	) (Execution, error)
+	AtomicWith(audit.Outbox) bool
+}
+
 type MemoryExecutionStore struct {
 	mu        sync.RWMutex
 	items     map[string]Execution
@@ -39,6 +65,8 @@ type MemoryExecutionStore struct {
 	nextFence int64
 	now       func() time.Time
 }
+
+func (*MemoryExecutionStore) Durable() bool { return false }
 
 func NewMemoryExecutionStore() *MemoryExecutionStore {
 	return &MemoryExecutionStore{

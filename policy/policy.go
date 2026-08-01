@@ -43,6 +43,13 @@ type Evaluator interface {
 	Evaluate(context.Context, Action) (Decision, error)
 }
 
+// CapabilityEvaluator marks policies that enforce trusted role-to-capability
+// grants before delegating to risk policy.
+type CapabilityEvaluator interface {
+	Evaluator
+	EnforcesCapabilities() bool
+}
+
 // RolePolicyOptions maps trusted application roles to exact tool
 // capabilities. Capability names come from ToolDescriptor.Permissions and are
 // never taken from model output. Next defaults to RiskPolicy.
@@ -59,6 +66,8 @@ type RolePolicy struct {
 	roleCapabilities map[string]map[string]struct{}
 	next             Evaluator
 }
+
+func (*RolePolicy) EnforcesCapabilities() bool { return true }
 
 func NewRolePolicy(options RolePolicyOptions) (*RolePolicy, error) {
 	if options.Next == nil {
@@ -223,6 +232,16 @@ type ApprovalStore interface {
 	Decide(context.Context, string, ApprovalStatus, core.Principal, string) (Approval, error)
 }
 
+type DurableApprovalStore interface {
+	ApprovalStore
+	Durable() bool
+}
+
+type ProtectedApprovalStore interface {
+	DurableApprovalStore
+	Protected() bool
+}
+
 type ApprovalFilter struct {
 	ExecutionID string
 	Status      ApprovalStatus
@@ -279,7 +298,11 @@ func (s *MemoryApprovalStore) Request(ctx context.Context, approval Approval) (A
 	}
 	approval.TenantID = principal.TenantID
 	if approval.ID == "" {
-		approval.ID = id.New()
+		var err error
+		approval.ID, err = id.New()
+		if err != nil {
+			return Approval{}, err
+		}
 	}
 	if approval.Status == "" {
 		approval.Status = ApprovalPending

@@ -13,7 +13,14 @@ func (e *Executor) acquireExecution(
 ) (context.Context, Execution, func(), error) {
 	if existing, ok := ExecutionClaimFromContext(ctx); ok &&
 		existing.Execution.ID == checkpoint.ID {
-		return ctx, checkpoint, func() {}, nil
+		store, supported := e.executions.(ExecutionLeaseStore)
+		if !supported {
+			return ctx, checkpoint, func() {}, &ExecutionError{
+				Kind:    core.ErrorConfig,
+				Message: "workflow execution store does not support leases",
+			}
+		}
+		return e.maintainExecutionClaim(ctx, store, existing)
 	}
 	if e.workerID == "" {
 		if e.requireLease {
@@ -43,6 +50,14 @@ func (e *Executor) acquireExecution(
 			Message: "workflow execution is owned by another worker",
 		}
 	}
+	return e.maintainExecutionClaim(ctx, store, claim)
+}
+
+func (e *Executor) maintainExecutionClaim(
+	ctx context.Context,
+	store ExecutionLeaseStore,
+	claim ExecutionClaim,
+) (context.Context, Execution, func(), error) {
 	leaseCtx, cancel := context.WithCancel(ctx)
 	leaseCtx = WithExecutionClaim(leaseCtx, claim)
 	done := make(chan struct{})

@@ -120,6 +120,52 @@ func ValidateOutput(
 	return validateContractValue(schema, output, path)
 }
 
+// ValidateToolInput verifies an actual tool invocation against the trusted
+// input schema advertised to the provider. Production runtimes should call it
+// after Tool.Validate as well as before execution so mutable validators or
+// permission callbacks cannot change an authorized invocation silently.
+func ValidateToolInput(
+	schema map[string]interface{},
+	input map[string]interface{},
+	toolName string,
+) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	path := "tool_input"
+	if strings.TrimSpace(toolName) != "" {
+		path = "tool_input." + toolName
+	}
+	if err := validateContractSchema(
+		path+"_schema", schema, true, 0,
+	); err != nil {
+		return err
+	}
+	return validateContractValue(schema, input, path)
+}
+
+// ValidateToolSchemas validates the trusted input and output contracts without
+// requiring example values. It intentionally supports the bounded JSON Schema
+// subset used by the deterministic workflow runtime.
+func ValidateToolSchemas(
+	inputSchema map[string]interface{},
+	outputSchema map[string]interface{},
+	toolName string,
+) error {
+	path := "tool"
+	if strings.TrimSpace(toolName) != "" {
+		path += "." + toolName
+	}
+	if err := validateContractSchema(
+		path+"_input_schema", inputSchema, true, 0,
+	); err != nil {
+		return err
+	}
+	return validateContractSchema(
+		path+"_output_schema", outputSchema, false, 0,
+	)
+}
+
 func referencedValues(step Step) []Value {
 	values := make([]Value, 0)
 	if step.When != nil {

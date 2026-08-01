@@ -37,11 +37,24 @@ type Outbox interface {
 	MarkDelivered(context.Context, string) error
 }
 
+// DurableOutbox explicitly identifies outboxes that survive process restarts.
+type DurableOutbox interface {
+	Outbox
+	Durable() bool
+}
+
+type ProtectedOutbox interface {
+	DurableOutbox
+	Protected() bool
+}
+
 type MemoryOutbox struct {
 	mu    sync.RWMutex
 	items map[string]Delivery
 	now   func() time.Time
 }
+
+func (*MemoryOutbox) Durable() bool { return false }
 
 func NewMemoryOutbox() *MemoryOutbox {
 	return &MemoryOutbox{

@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,27 @@ type ExecutionLeaseStore interface {
 		context.Context, ExecutionClaim, time.Duration,
 	) (ExecutionClaim, error)
 	ReleaseExecution(context.Context, ExecutionClaim) error
+}
+
+// ReadyExecutionClaimRequest describes a bounded worker-queue claim. Stores
+// must exclude every live lease before applying Limit so busy rows cannot
+// starve older ready work.
+type ReadyExecutionClaimRequest struct {
+	Statuses []ExecutionStatus
+	Owner    string
+	Duration time.Duration
+	Limit    int
+}
+
+// ReadyExecutionClaimer atomically selects and leases ready executions.
+// Implementations should prefer the oldest ready rows to provide bounded
+// fairness across repeated coordinator polls.
+type ReadyExecutionClaimer interface {
+	ExecutionLeaseStore
+	ClaimReadyExecutions(
+		context.Context,
+		ReadyExecutionClaimRequest,
+	) ([]ExecutionClaim, error)
 }
 
 type executionClaimContextKey struct{}
@@ -109,6 +131,72 @@ func (s *MemoryExecutionStore) ClaimExecution(
 		Execution: cloned, Owner: owner,
 		Token: lease.token, LeaseUntil: lease.until,
 	}, true, nil
+}
+
+func (s *MemoryExecutionStore) ClaimReadyExecutions(
+	ctx context.Context,
+	request ReadyExecutionClaimRequest,
+) ([]ExecutionClaim, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := validateReadyExecutionClaimRequest(request); err != nil {
+		return nil, err
+	}
+	principal, err := executionWorkerPrincipal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	statuses := make(map[ExecutionStatus]struct{}, len(request.Statuses))
+	for _, status := range request.Statuses {
+		statuses[status] = struct{}{}
+	}
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ready := make([]Execution, 0)
+	for _, execution := range s.items {
+		if execution.Principal.TenantID != principal.TenantID {
+			continue
+		}
+		if _, included := statuses[execution.Status]; !included {
+			continue
+		}
+		lease := s.leases[execution.ID]
+		if lease.owner != "" && now.Before(lease.until) {
+			continue
+		}
+		ready = append(ready, execution)
+	}
+	sort.Slice(ready, func(i, j int) bool {
+		if ready[i].UpdatedAt.Equal(ready[j].UpdatedAt) {
+			return ready[i].ID < ready[j].ID
+		}
+		return ready[i].UpdatedAt.Before(ready[j].UpdatedAt)
+	})
+	if len(ready) > request.Limit {
+		ready = ready[:request.Limit]
+	}
+	if s.leases == nil {
+		s.leases = make(map[string]memoryExecutionLease)
+	}
+	claims := make([]ExecutionClaim, 0, len(ready))
+	for _, execution := range ready {
+		lease := s.leases[execution.ID]
+		lease.owner = request.Owner
+		lease.token = atomic.AddInt64(&s.nextFence, 1)
+		lease.until = now.Add(request.Duration)
+		s.leases[execution.ID] = lease
+		cloned, err := cloneExecution(execution)
+		if err != nil {
+			return nil, err
+		}
+		claims = append(claims, ExecutionClaim{
+			Execution: cloned, Owner: request.Owner,
+			Token: lease.token, LeaseUntil: lease.until,
+		})
+	}
+	return claims, nil
 }
 
 func (s *MemoryExecutionStore) RenewExecution(
@@ -198,6 +286,35 @@ func validateLeaseRequest(owner string, duration time.Duration) error {
 	return nil
 }
 
+func validateReadyExecutionClaimRequest(
+	request ReadyExecutionClaimRequest,
+) error {
+	if err := validateLeaseRequest(
+		request.Owner, request.Duration,
+	); err != nil {
+		return err
+	}
+	if request.Limit < 1 || request.Limit > 1000 {
+		return core.NewConfigError(
+			"workflow ready-claim limit must be between 1 and 1000",
+		)
+	}
+	if len(request.Statuses) == 0 {
+		return core.NewConfigError(
+			"workflow ready claim requires at least one status",
+		)
+	}
+	for _, status := range request.Statuses {
+		if status != ExecutionRunning &&
+			status != ExecutionAwaitingApproval {
+			return core.NewConfigError(
+				"workflow ready claim status is invalid",
+			)
+		}
+	}
+	return nil
+}
+
 func executionWorkerPrincipal(
 	ctx context.Context,
 ) (core.Principal, error) {
@@ -242,3 +359,4 @@ func requireExecutionClaim(
 }
 
 var _ ExecutionLeaseStore = (*MemoryExecutionStore)(nil)
+var _ ReadyExecutionClaimer = (*MemoryExecutionStore)(nil)

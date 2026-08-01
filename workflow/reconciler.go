@@ -48,6 +48,14 @@ type ToolReconciler interface {
 	) (ToolReconciliationResult, error)
 }
 
+// ToolReconcilerCatalog lets the production executor prove during preflight
+// that every non-idempotent or unknown side effect has an authoritative
+// recovery path before the workflow can perform any action.
+type ToolReconcilerCatalog interface {
+	ToolReconciler
+	CanReconcileTool(string) bool
+}
+
 type ReconcilerRegistry struct {
 	mu    sync.RWMutex
 	items map[string]ToolReconciler
@@ -79,6 +87,12 @@ func (r *ReconcilerRegistry) Register(
 	}
 	r.items[toolName] = reconciler
 	return nil
+}
+
+func (r *ReconcilerRegistry) CanReconcileTool(toolName string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.items[strings.TrimSpace(toolName)] != nil
 }
 
 func (r *ReconcilerRegistry) ReconcileTool(
@@ -239,3 +253,4 @@ func validReconciliationIdentifier(value string) bool {
 }
 
 var _ ToolReconciler = (*ReconcilerRegistry)(nil)
+var _ ToolReconcilerCatalog = (*ReconcilerRegistry)(nil)

@@ -362,6 +362,10 @@ func applyMigrations(
 
 func (s *Store) Close() error { return s.db.Close() }
 
+func (s *Store) Protected() bool {
+	return s != nil && s.documents.protected()
+}
+
 func (s *Store) Workflows() workflow.Store {
 	return workflowStore{db: s.db, documents: s.documents}
 }
@@ -682,6 +686,11 @@ func loadWorkflow(
 type executionStore struct {
 	db        *sql.DB
 	documents documentCodec
+}
+
+func (executionStore) Durable() bool { return true }
+func (s executionStore) Protected() bool {
+	return s.documents.protected()
 }
 
 func (s executionStore) Create(
@@ -1121,6 +1130,11 @@ type approvalStore struct {
 	documents documentCodec
 }
 
+func (approvalStore) Durable() bool { return true }
+func (s approvalStore) Protected() bool {
+	return s.documents.protected()
+}
+
 func (s approvalStore) Request(ctx context.Context, approval policy.Approval) (policy.Approval, error) {
 	principal, err := storageActor(ctx, "approval")
 	if err != nil {
@@ -1131,7 +1145,11 @@ func (s approvalStore) Request(ctx context.Context, approval policy.Approval) (p
 	}
 	approval.TenantID = principal.TenantID
 	if approval.ID == "" {
-		approval.ID = id.New()
+		var err error
+		approval.ID, err = id.New()
+		if err != nil {
+			return policy.Approval{}, err
+		}
 	}
 	if approval.Status == "" {
 		approval.Status = policy.ApprovalPending
@@ -1362,7 +1380,11 @@ func (s auditStore) Append(ctx context.Context, event audit.Event) error {
 		return core.NewPermissionError("audit event belongs to another tenant")
 	}
 	if event.ID == "" {
-		event.ID = id.New()
+		var err error
+		event.ID, err = id.New()
+		if err != nil {
+			return err
+		}
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
@@ -1413,6 +1435,11 @@ func (s auditStore) List(ctx context.Context, executionID string) ([]audit.Event
 type auditOutbox struct {
 	db        *sql.DB
 	documents documentCodec
+}
+
+func (auditOutbox) Durable() bool { return true }
+func (s auditOutbox) Protected() bool {
+	return s.documents.protected()
 }
 
 func (s auditOutbox) Enqueue(ctx context.Context, event audit.Event) error {

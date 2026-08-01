@@ -47,6 +47,19 @@ type ExecutorOptions struct {
 	ExecutionLeaseDuration time.Duration
 	RequireExecutionLease  bool
 	Now                    func() time.Time
+	Production             *ExecutorProductionOptions
+}
+
+// ExecutorLimits bounds workflow definitions and durable checkpoint payloads.
+type ExecutorLimits struct {
+	MaxSteps           int
+	MaxToolOutputBytes int
+	MaxCheckpointBytes int
+}
+
+// ExecutorProductionOptions enables fail-closed runtime configuration.
+type ExecutorProductionOptions struct {
+	Limits ExecutorLimits
 }
 
 type Executor struct {
@@ -55,6 +68,7 @@ type Executor struct {
 	approvals        policy.ApprovalStore
 	audit            audit.Sink
 	executions       ExecutionStore
+	transitions      ExecutionTransitionStore
 	reconciler       ToolReconciler
 	approvalTTL      time.Duration
 	executionTimeout time.Duration
@@ -62,9 +76,14 @@ type Executor struct {
 	leaseDuration    time.Duration
 	requireLease     bool
 	now              func() time.Time
+	limits           ExecutorLimits
+	production       bool
 }
 
 func NewExecutor(options ExecutorOptions) (*Executor, error) {
+	if err := validateProductionExecutorOptions(options); err != nil {
+		return nil, err
+	}
 	if options.Tools == nil {
 		return nil, core.NewConfigError("workflow executor requires a tool runner")
 	}
@@ -119,9 +138,14 @@ func NewExecutor(options ExecutorOptions) (*Executor, error) {
 		}
 		options.Audit = dispatcher
 	}
+	var transitions ExecutionTransitionStore
+	if options.Production != nil {
+		transitions, _ = options.Executions.(ExecutionTransitionStore)
+	}
 	return &Executor{
 		tools: options.Tools, policy: options.Policy, approvals: options.Approvals,
 		audit: options.Audit, executions: options.Executions,
+		transitions:      transitions,
 		reconciler:       options.Reconciler,
 		approvalTTL:      options.ApprovalTTL,
 		executionTimeout: options.ExecutionTimeout,
@@ -129,7 +153,134 @@ func NewExecutor(options ExecutorOptions) (*Executor, error) {
 		leaseDuration:    options.ExecutionLeaseDuration,
 		requireLease:     options.RequireExecutionLease,
 		now:              options.Now,
+		limits:           options.productionLimits(),
+		production:       options.Production != nil,
 	}, nil
+}
+
+func (options ExecutorOptions) productionLimits() ExecutorLimits {
+	if options.Production == nil {
+		return ExecutorLimits{}
+	}
+	return options.Production.Limits
+}
+
+// NewProductionExecutor makes the fail-closed workflow profile explicit.
+func NewProductionExecutor(options ExecutorOptions) (*Executor, error) {
+	if options.Production == nil {
+		return nil, core.NewConfigError(
+			"production workflow executor requires production options",
+		)
+	}
+	return NewExecutor(options)
+}
+
+func validateProductionExecutorOptions(options ExecutorOptions) error {
+	if options.Production == nil {
+		return nil
+	}
+	switch {
+	case options.Policy == nil:
+		return core.NewConfigError(
+			"production workflow executor requires an explicit policy",
+		)
+	case options.Approvals == nil:
+		return core.NewConfigError(
+			"production workflow executor requires a durable approval store",
+		)
+	case options.AuditOutbox == nil:
+		return core.NewConfigError(
+			"production workflow executor requires a durable audit outbox",
+		)
+	case options.Executions == nil:
+		return core.NewConfigError(
+			"production workflow executor requires a durable execution store",
+		)
+	case options.Reconciler == nil:
+		return core.NewConfigError(
+			"production workflow executor requires a side-effect reconciler",
+		)
+	case !options.RequireExecutionLease:
+		return core.NewConfigError(
+			"production workflow executor requires execution leasing",
+		)
+	case options.WorkerID == "":
+		return core.NewConfigError(
+			"production workflow executor requires a worker id",
+		)
+	case options.ApprovalTTL <= 0:
+		return core.NewConfigError(
+			"production workflow executor requires a positive approval TTL",
+		)
+	case options.ExecutionTimeout <= 0:
+		return core.NewConfigError(
+			"production workflow executor requires a positive execution timeout",
+		)
+	}
+	capabilityPolicy, ok := options.Policy.(policy.CapabilityEvaluator)
+	if !ok || !capabilityPolicy.EnforcesCapabilities() {
+		return core.NewConfigError(
+			"production workflow executor requires a role/capability authorization policy",
+		)
+	}
+	durableApprovals, ok := options.Approvals.(policy.DurableApprovalStore)
+	if !ok || !durableApprovals.Durable() {
+		return core.NewConfigError(
+			"production workflow executor requires a durable approval store",
+		)
+	}
+	protectedApprovals, ok := options.Approvals.(policy.ProtectedApprovalStore)
+	if !ok || !protectedApprovals.Protected() {
+		return core.NewConfigError(
+			"production workflow executor requires a protected approval store",
+		)
+	}
+	durableExecutions, ok := options.Executions.(DurableExecutionStore)
+	if !ok || !durableExecutions.Durable() {
+		return core.NewConfigError(
+			"production workflow executor requires a durable execution store",
+		)
+	}
+	protectedExecutions, ok := options.Executions.(ProtectedExecutionStore)
+	if !ok || !protectedExecutions.Protected() {
+		return core.NewConfigError(
+			"production workflow executor requires a protected execution store",
+		)
+	}
+	atomicExecutions, ok := options.Executions.(ExecutionTransitionStore)
+	if !ok || !atomicExecutions.AtomicWith(options.AuditOutbox) {
+		return core.NewConfigError(
+			"production workflow executor requires atomic execution and audit-outbox transitions",
+		)
+	}
+	durableOutbox, ok := options.AuditOutbox.(audit.DurableOutbox)
+	if !ok || !durableOutbox.Durable() {
+		return core.NewConfigError(
+			"production workflow executor requires a durable audit outbox",
+		)
+	}
+	protectedOutbox, ok := options.AuditOutbox.(audit.ProtectedOutbox)
+	if !ok || !protectedOutbox.Protected() {
+		return core.NewConfigError(
+			"production workflow executor requires a protected audit outbox",
+		)
+	}
+	limits := options.Production.Limits
+	switch {
+	case limits.MaxSteps <= 0:
+		return core.NewConfigError(
+			"production workflow executor requires a positive step limit",
+		)
+	case limits.MaxToolOutputBytes <= 0:
+		return core.NewConfigError(
+			"production workflow executor requires a positive tool-output byte limit",
+		)
+	case limits.MaxCheckpointBytes <= 0:
+		return core.NewConfigError(
+			"production workflow executor requires a positive checkpoint byte limit",
+		)
+	}
+	return nil
 }
 
 func (e *Executor) Execute(ctx context.Context, version Version, input, workflowContext map[string]interface{}, principal core.Principal) (Execution, error) {
@@ -145,6 +296,15 @@ func (e *Executor) Execute(ctx context.Context, version Version, input, workflow
 	principal = authenticated
 	if version.Status != VersionPublished {
 		return Execution{}, &ExecutionError{Kind: core.ErrorValidation, Message: "only published workflow versions can execute"}
+	}
+	if e.production && len(version.Steps) > e.limits.MaxSteps {
+		return Execution{}, &ExecutionError{
+			Kind: core.ErrorValidation,
+			Message: fmt.Sprintf(
+				"workflow has %d steps; production limit is %d",
+				len(version.Steps), e.limits.MaxSteps,
+			),
+		}
 	}
 	if err := version.Validate(); err != nil {
 		return Execution{}, &ExecutionError{Kind: core.ErrorValidation, Message: err.Error()}
@@ -168,8 +328,12 @@ func (e *Executor) Execute(ctx context.Context, version Version, input, workflow
 		}
 	}
 	startedAt := e.now()
+	executionID, err := id.New()
+	if err != nil {
+		return Execution{}, err
+	}
 	execution := Execution{
-		ID:              id.New(),
+		ID:              executionID,
 		WorkflowID:      version.Workflow.ID,
 		WorkflowVersion: version.Version,
 		Principal:       principal,
@@ -187,12 +351,17 @@ func (e *Executor) Execute(ctx context.Context, version Version, input, workflow
 	for index, step := range version.Steps {
 		execution.Steps[index] = StepExecution{StepID: step.ID, Status: StepPending}
 	}
-	if e.executions != nil {
-		created, err := e.executions.Create(ctx, execution)
-		if err != nil {
-			return Execution{}, err
-		}
-		execution = created
+	if err := e.validateCheckpointSize(execution); err != nil {
+		return Execution{}, err
+	}
+	if err := e.createWithEvents(
+		ctx, &execution,
+		auditEventSpec{
+			eventType: audit.EventExecutionStarted,
+			outcome:   "started",
+		},
+	); err != nil {
+		return Execution{}, err
 	}
 	runCtx, claimed, release, err := e.acquireExecution(ctx, execution)
 	if err != nil {
@@ -201,15 +370,6 @@ func (e *Executor) Execute(ctx context.Context, version Version, input, workflow
 	defer release()
 	ctx = runCtx
 	execution = claimed
-	if err := e.emit(ctx, execution, audit.EventExecutionStarted, "", "", "", "started", nil); err != nil {
-		execution.Status = ExecutionFailed
-		execution.CompletedAt = e.now()
-		execution.Error = &ExecutionError{
-			Kind: core.ErrorWorkflow, Message: "emit execution start audit event: " + err.Error(),
-		}
-		_ = e.checkpoint(context.WithoutCancel(ctx), &execution)
-		return Execution{}, err
-	}
 	return e.run(ctx, version, execution)
 }
 
@@ -291,11 +451,20 @@ func (e *Executor) Resume(ctx context.Context, version Version, checkpoint Execu
 		checkpoint.Steps[checkpoint.NextStep].Status = StepFailed
 		checkpoint.Steps[checkpoint.NextStep].Error = checkpoint.Error
 		checkpoint.Steps[checkpoint.NextStep].CompletedAt = checkpoint.CompletedAt
-		if err := e.checkpoint(ctx, &checkpoint); err != nil {
+		if err := e.checkpointWithEvents(
+			ctx, &checkpoint,
+			auditEventSpec{
+				eventType:  audit.EventApprovalDecided,
+				stepID:     version.Steps[checkpoint.NextStep].ID,
+				approvalID: approval.ID, outcome: string(approval.Status),
+			},
+			auditEventSpec{
+				eventType: audit.EventExecutionEnded,
+				outcome:   "failed",
+			},
+		); err != nil {
 			return checkpoint, err
 		}
-		_ = e.emit(ctx, checkpoint, audit.EventApprovalDecided, version.Steps[checkpoint.NextStep].ID, "", approval.ID, string(approval.Status), nil)
-		_ = e.emit(ctx, checkpoint, audit.EventExecutionEnded, "", "", "", "failed", nil)
 		return checkpoint, nil
 	case policy.ApprovalGranted:
 		stepID := version.Steps[checkpoint.NextStep].ID
@@ -305,10 +474,14 @@ func (e *Executor) Resume(ctx context.Context, version Version, checkpoint Execu
 		checkpoint.Approvals[stepID] = approval.ID
 		checkpoint.PendingApprovalID = ""
 		checkpoint.Status = ExecutionRunning
-		if err := e.emit(ctx, checkpoint, audit.EventApprovalDecided, stepID, "", approval.ID, "granted", nil); err != nil {
-			return checkpoint, err
-		}
-		if err := e.checkpoint(ctx, &checkpoint); err != nil {
+		if err := e.checkpointWithEvents(
+			ctx, &checkpoint,
+			auditEventSpec{
+				eventType: audit.EventApprovalDecided,
+				stepID:    stepID, approvalID: approval.ID,
+				outcome: "granted",
+			},
+		); err != nil {
 			return checkpoint, err
 		}
 	default:
@@ -372,6 +545,30 @@ func (e *Executor) validateReferences(ctx context.Context, version Version) erro
 		if !exists {
 			return fmt.Errorf("workflow tool %q is not registered", step.Tool.Name)
 		}
+		if e.production && len(descriptor.Permissions) == 0 {
+			return fmt.Errorf(
+				"production workflow tool %q requires at least one capability",
+				step.Tool.Name,
+			)
+		}
+		if e.production && len(descriptor.OutputSchema) == 0 {
+			return fmt.Errorf(
+				"production workflow tool %q requires a trusted output schema",
+				step.Tool.Name,
+			)
+		}
+		if e.production &&
+			(descriptor.SideEffect == core.SideEffectNonIdempotent ||
+				descriptor.SideEffect == core.SideEffectUnknown) &&
+			!workflowCallUsesIdempotency(descriptor, step.Tool) {
+			catalog, ok := e.reconciler.(ToolReconcilerCatalog)
+			if !ok || !catalog.CanReconcileTool(step.Tool.Name) {
+				return fmt.Errorf(
+					"production workflow tool %q requires an authoritative reconciler or an idempotency key",
+					step.Tool.Name,
+				)
+			}
+		}
 		if err := validateContractSchema(
 			"tool_output_schema."+step.Tool.Name,
 			descriptor.OutputSchema, false, 0,
@@ -381,6 +578,17 @@ func (e *Executor) validateReferences(ctx context.Context, version Version) erro
 		outputs[step.Tool.Name] = descriptor.OutputSchema
 	}
 	return ValidateReferences(version, outputs)
+}
+
+func workflowCallUsesIdempotency(
+	descriptor core.ToolDescriptor,
+	call *ToolCall,
+) bool {
+	if call == nil || call.IdempotencyKey == nil {
+		return false
+	}
+	return descriptor.Idempotency == core.IdempotencyOptional ||
+		descriptor.Idempotency == core.IdempotencyRequired
 }
 
 func (e *Executor) run(ctx context.Context, version Version, execution Execution) (Execution, error) {
@@ -419,10 +627,13 @@ func (e *Executor) run(ctx context.Context, version Version, execution Execution
 		if run.StartedAt.IsZero() {
 			run.StartedAt = e.now()
 		}
-		if err := e.checkpoint(ctx, &execution); err != nil {
-			return execution, err
-		}
-		if err := e.emit(ctx, execution, audit.EventStepStarted, step.ID, "", "", "started", nil); err != nil {
+		if err := e.checkpointWithEvents(
+			ctx, &execution,
+			auditEventSpec{
+				eventType: audit.EventStepStarted,
+				stepID:    step.ID, outcome: "started",
+			},
+		); err != nil {
 			return execution, err
 		}
 		var completed bool
@@ -453,19 +664,25 @@ func (e *Executor) run(ctx context.Context, version Version, execution Execution
 		run.Status = StepCompleted
 		run.CompletedAt = e.now()
 		execution.NextStep++
-		if err := e.checkpoint(ctx, &execution); err != nil {
-			return execution, err
-		}
-		if err := e.emit(ctx, execution, audit.EventStepCompleted, step.ID, "", "", "completed", nil); err != nil {
+		if err := e.checkpointWithEvents(
+			ctx, &execution,
+			auditEventSpec{
+				eventType: audit.EventStepCompleted,
+				stepID:    step.ID, outcome: "completed",
+			},
+		); err != nil {
 			return execution, err
 		}
 	}
 	execution.Status = ExecutionCompleted
 	execution.CompletedAt = e.now()
-	if err := e.checkpoint(ctx, &execution); err != nil {
-		return execution, err
-	}
-	if err := e.emit(ctx, execution, audit.EventExecutionEnded, "", "", "", "completed", nil); err != nil {
+	if err := e.checkpointWithEvents(
+		ctx, &execution,
+		auditEventSpec{
+			eventType: audit.EventExecutionEnded,
+			outcome:   "completed",
+		},
+	); err != nil {
 		return execution, err
 	}
 	return execution, nil
@@ -568,14 +785,38 @@ func (e *Executor) runToolStep(ctx context.Context, execution *Execution, step S
 		if err := e.checkpoint(ctx, execution); err != nil {
 			return false, err
 		}
-		callID := id.New()
-		if err := e.emit(ctx, *execution, audit.EventToolCalled, step.ID, step.Tool.Name, "", "started", map[string]interface{}{
-			"tool_call_id": callID, "input_hash": hashValue(input), "attempt": attempt,
-		}); err != nil {
+		callID, err := id.New()
+		if err != nil {
+			return false, err
+		}
+		if err := e.checkpointWithEvents(
+			ctx, execution,
+			auditEventSpec{
+				eventType: audit.EventToolCalled,
+				stepID:    step.ID, toolName: step.Tool.Name,
+				outcome: "started",
+				attributes: map[string]interface{}{
+					"tool_call_id": callID,
+					"input_hash":   hashValue(input),
+					"attempt":      attempt,
+				},
+			},
+		); err != nil {
 			return false, err
 		}
 		result, executeErr := e.tools.Execute(toolCtx, step.Tool.Name, cloneMap(input), idempotencyKey)
 		if executeErr == nil {
+			if err := e.validateToolOutputSize(
+				step.Tool.Name, result.Output,
+			); err != nil {
+				if descriptor.SideEffect != core.SideEffectNone {
+					return e.requireRecovery(
+						ctx, execution, step, run, nil,
+						"tool completed but its output exceeded the trusted production limit",
+					)
+				}
+				return false, err
+			}
 			if err := ValidateOutput(
 				descriptor.OutputSchema, result.Output, step.Tool.Name,
 			); err != nil {
@@ -592,28 +833,55 @@ func (e *Executor) runToolStep(ctx context.Context, execution *Execution, step S
 						err.Error(),
 				}
 			}
+			candidate, cloneErr := cloneExecution(*execution)
+			if cloneErr != nil {
+				if descriptor.SideEffect != core.SideEffectNone {
+					return e.requireRecovery(
+						ctx, execution, step, run, nil,
+						"tool completed but its bounded checkpoint could not be constructed",
+					)
+				}
+				return false, cloneErr
+			}
+			candidate.Steps[execution.NextStep].Output = result.Output
+			if candidate.State == nil {
+				candidate.State = make(map[string]interface{})
+			}
+			candidate.State[step.ID] = map[string]interface{}{
+				"output": result.Output,
+			}
+			if err := e.validateCheckpointSize(candidate); err != nil {
+				if descriptor.SideEffect != core.SideEffectNone {
+					return e.requireRecovery(
+						ctx, execution, step, run, nil,
+						"tool completed but its result exceeds the durable checkpoint limit",
+					)
+				}
+				return false, err
+			}
 			run.Output = result.Output
 			execution.State[step.ID] = map[string]interface{}{"output": result.Output}
 			// Persist the observed result while the step remains running. If
 			// the process stops before the completed transition, a restart
 			// sees an explicitly recoverable in-flight tool call rather than
 			// replaying a possibly applied side effect.
-			if err := e.checkpoint(context.WithoutCancel(ctx), execution); err != nil {
+			if err := e.checkpointWithEvents(
+				context.WithoutCancel(ctx), execution,
+				auditEventSpec{
+					eventType: audit.EventToolCompleted,
+					stepID:    step.ID, toolName: step.Tool.Name,
+					outcome: "completed",
+					attributes: map[string]interface{}{
+						"tool_call_id": callID,
+						"output_hash":  hashValue(result.Output),
+						"attempt":      attempt,
+					},
+				},
+			); err != nil {
 				if descriptor.SideEffect != core.SideEffectNone {
 					return e.requireRecovery(
 						ctx, execution, step, run, result.Output,
-						"tool completed but its result checkpoint could not be persisted",
-					)
-				}
-				return false, err
-			}
-			if err := e.emit(ctx, *execution, audit.EventToolCompleted, step.ID, step.Tool.Name, "", "completed", map[string]interface{}{
-				"tool_call_id": callID, "output_hash": hashValue(result.Output), "attempt": attempt,
-			}); err != nil {
-				if descriptor.SideEffect != core.SideEffectNone {
-					return e.requireRecovery(
-						ctx, execution, step, run, result.Output,
-						"tool completed but its audit event could not be durably recorded",
+						"tool completed but its result and audit transition could not be durably recorded",
 					)
 				}
 				return false, err
@@ -661,13 +929,14 @@ func (e *Executor) requireRecovery(
 	}
 	execution.Status = ExecutionRecoveryRequired
 	execution.Error = run.Error
-	if err := e.checkpoint(context.WithoutCancel(ctx), execution); err != nil {
-		return false, err
-	}
-	if err := e.emit(
-		context.WithoutCancel(ctx), *execution, audit.EventRecoveryRequired,
-		step.ID, step.Tool.Name, "", "recovery_required",
-		map[string]interface{}{"reason": reason},
+	if err := e.checkpointWithEvents(
+		context.WithoutCancel(ctx), execution,
+		auditEventSpec{
+			eventType: audit.EventRecoveryRequired,
+			stepID:    step.ID, toolName: step.Tool.Name,
+			outcome:    "recovery_required",
+			attributes: map[string]interface{}{"reason": reason},
+		},
 	); err != nil {
 		return false, err
 	}
@@ -725,7 +994,14 @@ func (e *Executor) requireApproval(ctx context.Context, execution *Execution, st
 	execution.PendingApprovalID = approval.ID
 	execution.Status = ExecutionAwaitingApproval
 	execution.Steps[execution.NextStep].Status = StepAwaitingApproval
-	if err := e.emit(ctx, *execution, audit.EventApprovalRequested, step.ID, toolName, approval.ID, "pending", nil); err != nil {
+	if err := e.checkpointWithEvents(
+		ctx, execution,
+		auditEventSpec{
+			eventType: audit.EventApprovalRequested,
+			stepID:    step.ID, toolName: toolName,
+			approvalID: approval.ID, outcome: "pending",
+		},
+	); err != nil {
 		return false, err
 	}
 	return false, nil
@@ -738,15 +1014,29 @@ func (e *Executor) fail(ctx context.Context, execution Execution, run *StepExecu
 	run.Status = StepFailed
 	run.CompletedAt = e.now()
 	run.Error = execution.Error
-	if err := e.checkpoint(context.WithoutCancel(ctx), &execution); err != nil {
+	if err := e.checkpointWithEvents(
+		context.WithoutCancel(ctx), &execution,
+		auditEventSpec{
+			eventType: audit.EventStepFailed,
+			stepID:    step.ID, toolName: toolName, outcome: "failed",
+			attributes: map[string]interface{}{
+				"error_kind": string(kind),
+			},
+		},
+		auditEventSpec{
+			eventType: audit.EventExecutionEnded,
+			outcome:   "failed",
+		},
+	); err != nil {
 		return execution, err
 	}
-	_ = e.emit(ctx, execution, audit.EventStepFailed, step.ID, toolName, "", "failed", map[string]interface{}{"error_kind": string(kind)})
-	_ = e.emit(ctx, execution, audit.EventExecutionEnded, "", "", "", "failed", nil)
 	return execution, nil
 }
 
 func (e *Executor) checkpoint(ctx context.Context, execution *Execution) error {
+	if err := e.validateCheckpointSize(*execution); err != nil {
+		return err
+	}
 	if e.executions == nil {
 		return nil
 	}
@@ -759,26 +1049,200 @@ func (e *Executor) checkpoint(ctx context.Context, execution *Execution) error {
 	return nil
 }
 
-func (e *Executor) emit(ctx context.Context, execution Execution, eventType audit.EventType, stepID, toolName, approvalID, outcome string, attributes map[string]interface{}) error {
+type auditEventSpec struct {
+	eventType  audit.EventType
+	stepID     string
+	toolName   string
+	approvalID string
+	outcome    string
+	attributes map[string]interface{}
+}
+
+func (e *Executor) createWithEvents(
+	ctx context.Context,
+	execution *Execution,
+	specs ...auditEventSpec,
+) error {
+	events, err := e.buildAuditEvents(*execution, specs)
+	if err != nil {
+		return err
+	}
+	if e.transitions != nil {
+		saved, err := e.transitions.CreateWithEvents(
+			ctx, *execution, events,
+		)
+		if err != nil {
+			return err
+		}
+		*execution = saved
+		return nil
+	}
+	if e.executions != nil {
+		saved, err := e.executions.Create(ctx, *execution)
+		if err != nil {
+			return err
+		}
+		*execution = saved
+	}
+	return e.appendAuditEvents(ctx, events)
+}
+
+func (e *Executor) checkpointWithEvents(
+	ctx context.Context,
+	execution *Execution,
+	specs ...auditEventSpec,
+) error {
+	if err := e.validateCheckpointSize(*execution); err != nil {
+		return err
+	}
+	events, err := e.buildAuditEvents(*execution, specs)
+	if err != nil {
+		return err
+	}
+	if e.transitions != nil {
+		saved, err := e.transitions.UpdateWithEvents(
+			ctx, *execution, events,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"persist workflow execution transition: %w", err,
+			)
+		}
+		execution.Revision = saved.Revision
+		execution.UpdatedAt = saved.UpdatedAt
+		return nil
+	}
+	if err := e.checkpoint(ctx, execution); err != nil {
+		return err
+	}
+	return e.appendAuditEvents(ctx, events)
+}
+
+func (e *Executor) buildAuditEvents(
+	execution Execution,
+	specs []auditEventSpec,
+) ([]audit.Event, error) {
+	if e.audit == nil && e.transitions == nil {
+		return nil, nil
+	}
+	events := make([]audit.Event, 0, len(specs))
+	for _, spec := range specs {
+		eventID, err := id.New()
+		if err != nil {
+			return nil, err
+		}
+		eventAttributes := make(
+			map[string]interface{}, len(spec.attributes)+1,
+		)
+		for key, value := range spec.attributes {
+			eventAttributes[key] = value
+		}
+		if e.workerID != "" {
+			eventAttributes["worker_id"] = e.workerID
+		}
+		event := audit.Event{
+			ID: eventID, Type: spec.eventType, Timestamp: e.now(),
+			TenantID:    execution.Principal.TenantID,
+			ActorID:     execution.Principal.ActorID,
+			ExecutionID: execution.ID, WorkflowID: execution.WorkflowID,
+			WorkflowVersion: execution.WorkflowVersion,
+			StepID:          spec.stepID, ToolName: spec.toolName,
+			ApprovalID: spec.approvalID, Outcome: spec.outcome,
+			Attributes: eventAttributes,
+		}
+		if value, ok := eventAttributes["tool_call_id"].(string); ok {
+			event.ToolCallID = value
+		}
+		if value, ok := eventAttributes["input_hash"].(string); ok {
+			event.InputHash = value
+		}
+		if value, ok := eventAttributes["output_hash"].(string); ok {
+			event.OutputHash = value
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+func (e *Executor) appendAuditEvents(
+	ctx context.Context,
+	events []audit.Event,
+) error {
 	if e.audit == nil {
 		return nil
 	}
-	event := audit.Event{
-		ID: id.New(), Type: eventType, Timestamp: e.now(), TenantID: execution.Principal.TenantID,
-		ActorID: execution.Principal.ActorID, ExecutionID: execution.ID, WorkflowID: execution.WorkflowID,
-		WorkflowVersion: execution.WorkflowVersion, StepID: stepID, ToolName: toolName, ApprovalID: approvalID,
-		Outcome: outcome, Attributes: attributes,
+	for _, event := range events {
+		if err := e.audit.Append(ctx, event); err != nil {
+			return err
+		}
 	}
-	if value, ok := attributes["tool_call_id"].(string); ok {
-		event.ToolCallID = value
+	return nil
+}
+
+func (e *Executor) validateToolOutputSize(
+	toolName string,
+	output interface{},
+) error {
+	if !e.production {
+		return nil
 	}
-	if value, ok := attributes["input_hash"].(string); ok {
-		event.InputHash = value
+	size, err := encodedJSONSize(output)
+	if err != nil {
+		return &ExecutionError{
+			Kind: core.ErrorValidation, ToolName: toolName,
+			Message: "tool output is not JSON serializable",
+		}
 	}
-	if value, ok := attributes["output_hash"].(string); ok {
-		event.OutputHash = value
+	if size > e.limits.MaxToolOutputBytes {
+		return &ExecutionError{
+			Kind: core.ErrorValidation, ToolName: toolName,
+			Message: fmt.Sprintf(
+				"tool output exceeds production limit of %d bytes",
+				e.limits.MaxToolOutputBytes,
+			),
+		}
 	}
-	return e.audit.Append(ctx, event)
+	return nil
+}
+
+func (e *Executor) validateCheckpointSize(execution Execution) error {
+	if !e.production {
+		return nil
+	}
+	size, err := encodedJSONSize(execution)
+	if err != nil {
+		return &ExecutionError{
+			Kind:    core.ErrorValidation,
+			Message: "workflow checkpoint is not JSON serializable",
+		}
+	}
+	if size > e.limits.MaxCheckpointBytes {
+		return &ExecutionError{
+			Kind: core.ErrorValidation,
+			Message: fmt.Sprintf(
+				"workflow checkpoint exceeds production limit of %d bytes",
+				e.limits.MaxCheckpointBytes,
+			),
+		}
+	}
+	return nil
+}
+
+func encodedJSONSize(value interface{}) (int, error) {
+	encoded, err := json.Marshal(value)
+	return len(encoded), err
+}
+
+func (e *Executor) emit(ctx context.Context, execution Execution, eventType audit.EventType, stepID, toolName, approvalID, outcome string, attributes map[string]interface{}) error {
+	events, err := e.buildAuditEvents(execution, []auditEventSpec{{
+		eventType: eventType, stepID: stepID, toolName: toolName,
+		approvalID: approvalID, outcome: outcome,
+		attributes: attributes,
+	}})
+	if err != nil {
+		return err
+	}
+	return e.appendAuditEvents(ctx, events)
 }
 
 func resolveValue(value Value, execution Execution) (interface{}, bool, error) {

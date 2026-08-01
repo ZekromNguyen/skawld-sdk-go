@@ -176,8 +176,12 @@ func (p *Publisher) Publish(
 		return workflow.Version{}, err
 	}
 	if p.audit != nil {
+		eventID, err := id.New()
+		if err != nil {
+			return published, err
+		}
 		if err := p.audit.Append(ctx, audit.Event{
-			ID: id.New(), Type: audit.EventWorkflowPublished, Timestamp: p.now(),
+			ID: eventID, Type: audit.EventWorkflowPublished, Timestamp: p.now(),
 			TenantID: principal.TenantID, ActorID: principal.ActorID,
 			WorkflowID: workflowID, WorkflowVersion: versionNumber, Outcome: "published",
 			Attributes: map[string]interface{}{

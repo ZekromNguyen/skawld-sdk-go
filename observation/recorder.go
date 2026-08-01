@@ -60,11 +60,19 @@ func (r *Recorder) Start(ctx context.Context, workflowKey string, principal core
 			)
 		}
 	}
+	demonstrationID, err := id.New()
+	if err != nil {
+		return Demonstration{}, err
+	}
+	sessionID, err := id.New()
+	if err != nil {
+		return Demonstration{}, err
+	}
 	demo := Demonstration{
-		ID: id.New(), WorkflowKey: workflowKey, Principal: principal,
+		ID: demonstrationID, WorkflowKey: workflowKey, Principal: principal,
 		Status: DemonstrationRecording, StartedAt: r.now(),
 		Trace: WorkflowTrace{
-			SchemaVersion: SchemaVersion, SessionID: id.New(),
+			SchemaVersion: SchemaVersion, SessionID: sessionID,
 			InitialContext: contextValue, Events: []Event{},
 		},
 	}
@@ -86,7 +94,10 @@ func (r *Recorder) Capture(ctx context.Context, demonstrationID string, event Ev
 		return Event{}, &core.SkawldError{Kind: core.ErrorConflict, Message: "demonstration is not recording"}
 	}
 	if event.ID == "" {
-		event.ID = id.New()
+		event.ID, err = id.New()
+		if err != nil {
+			return Event{}, err
+		}
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = r.now()

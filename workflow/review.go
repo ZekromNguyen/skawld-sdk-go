@@ -84,8 +84,12 @@ func NewReview(
 	if err != nil {
 		return Review{}, err
 	}
+	reviewID, err := id.New()
+	if err != nil {
+		return Review{}, err
+	}
 	review := Review{
-		ID: id.New(), TenantID: principal.TenantID, WorkflowID: candidate.Workflow.ID,
+		ID: reviewID, TenantID: principal.TenantID, WorkflowID: candidate.Workflow.ID,
 		WorkflowVersion: candidate.Version, CandidateDigest: digest, Decision: decision,
 		ReviewedAt: now.UTC(), ReviewedBy: principal.ActorID, Reason: reason,
 	}

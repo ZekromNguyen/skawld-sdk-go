@@ -155,8 +155,12 @@ func (r *Runner) Run(ctx context.Context, suite Suite, version workflow.Version)
 	}
 
 	startedAt := r.now()
+	reportID, err := id.New()
+	if err != nil {
+		return Report{}, err
+	}
 	report := Report{
-		SchemaVersion: SchemaVersion, ID: id.New(), TenantID: principal.TenantID,
+		SchemaVersion: SchemaVersion, ID: reportID, TenantID: principal.TenantID,
 		SuiteName: suite.Name, WorkflowID: version.Workflow.ID, WorkflowVersion: version.Version,
 		WorkflowDigest: digest, StartedAt: startedAt,
 		Cases: make([]CaseResult, 0, len(suite.Scenarios)),

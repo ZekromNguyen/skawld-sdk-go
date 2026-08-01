@@ -70,6 +70,19 @@ func CanAccessSession(principal Principal, meta map[string]interface{}) bool {
 	return principal.TenantID != "" && principal.TenantID == owner.TenantID
 }
 
+// CanAccessSessionStrict requires both tenant and actor ownership. It is
+// intended for production callers after legacy unscoped sessions have been
+// migrated or quarantined.
+func CanAccessSessionStrict(
+	principal Principal,
+	meta map[string]interface{},
+) bool {
+	owner := PrincipalFromSessionMeta(meta)
+	return principal.Authenticated() && owner.Authenticated() &&
+		principal.TenantID == owner.TenantID &&
+		principal.ActorID == owner.ActorID
+}
+
 // BindPrincipalToSessionMeta returns a copy with reserved identity fields set.
 // Conflicting reserved values are rejected by returning ok=false.
 func BindPrincipalToSessionMeta(meta map[string]interface{}, principal Principal) (bound map[string]interface{}, ok bool) {

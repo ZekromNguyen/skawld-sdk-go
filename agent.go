@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ZekromNguyen/skawld-sdk-go/audit"
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
 	"github.com/ZekromNguyen/skawld-sdk-go/permissions"
+	"github.com/ZekromNguyen/skawld-sdk-go/policy"
 	"github.com/ZekromNguyen/skawld-sdk-go/sessions"
 	"github.com/ZekromNguyen/skawld-sdk-go/skills"
 	"github.com/ZekromNguyen/skawld-sdk-go/subagents"
@@ -42,6 +44,35 @@ type ProviderRetryPolicy struct {
 	MaxRetries     int
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
+}
+
+// RuntimeLimits bounds one agent run and the data retained by its session.
+// Zero values preserve the development-mode behavior. ProductionOptions
+// requires every limit to be positive.
+type RuntimeLimits struct {
+	MaxRunDuration           time.Duration
+	MaxToolCalls             int
+	MaxToolResultBytes       int
+	MaxProviderResponseBytes int
+	MaxProviderEvents        int
+	MaxOutputTokensPerTurn   int
+	MaxSessionBytes          int
+	MaxTotalTokens           int
+}
+
+// ProductionOptions turns on fail-closed runtime validation. Policy is a hard
+// authorization boundary and cannot be bypassed by interactive permissions.
+// AuditOutbox is required so consequential decisions survive sink outages.
+type ProductionOptions struct {
+	Policy      policy.Evaluator
+	Audit       audit.Sink
+	AuditOutbox audit.Outbox
+	Limits      RuntimeLimits
+	// AllowSkills opts into repository-local instruction overlays. Production
+	// disables skill discovery by default because skill bodies become trusted
+	// instructions. Subagents and MCP tools remain unavailable from the
+	// production agent boundary; execute integrations through workflows.
+	AllowSkills bool
 }
 
 // AgentOptions configures an Agent. NewAgent clones the supplied Tools
@@ -81,6 +112,10 @@ type AgentOptions struct {
 	SubagentsDir           string
 	DisableSkills          bool
 	DisableSubagents       bool
+	// Production enables fail-closed identity, authorization, audit, storage,
+	// and resource-limit validation. Development defaults remain unchanged when
+	// this field is nil.
+	Production *ProductionOptions
 }
 
 // Agent owns shared SDK runtime resources and can create multiple sessions
@@ -89,6 +124,8 @@ type AgentOptions struct {
 type Agent struct {
 	opts            AgentOptions
 	perm            *permissions.Engine
+	policy          policy.Evaluator
+	audit           audit.Sink
 	store           core.SessionStore
 	system          []core.SystemBlock
 	systemMu        sync.RWMutex
@@ -112,6 +149,15 @@ type Agent struct {
 }
 
 func NewAgent(opts AgentOptions) (*Agent, error) {
+	if err := validateProductionAgentOptions(opts); err != nil {
+		return nil, err
+	}
+	if opts.Production != nil {
+		if !opts.Production.AllowSkills {
+			opts.DisableSkills = true
+		}
+		opts.DisableSubagents = true
+	}
 	if opts.Provider == nil && opts.ProviderFactory != nil {
 		opts.Provider = opts.ProviderFactory.NewProvider()
 	}
@@ -192,6 +238,17 @@ func NewAgent(opts AgentOptions) (*Agent, error) {
 	}
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	a := &Agent{opts: opts, lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel, ownsTools: ownsTools}
+	if opts.Production != nil {
+		dispatcher, err := audit.NewDispatcher(
+			opts.Production.AuditOutbox, opts.Production.Audit,
+		)
+		if err != nil {
+			lifecycleCancel()
+			return nil, err
+		}
+		a.policy = opts.Production.Policy
+		a.audit = dispatcher
+	}
 	a.store = &observedSessionStore{inner: opts.SessionStore, agent: a}
 	if len(opts.MCPServers) > 0 {
 		a.mcp = mcp.NewManager(opts.MCPServers)
@@ -243,6 +300,28 @@ func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, err
 	if !principal.Valid() {
 		principal = a.opts.Principal
 	}
+	if a.production() != nil {
+		authenticated, exists := core.PrincipalFromContext(ctx)
+		if !exists || !authenticated.Authenticated() {
+			return nil, core.NewPermissionError(
+				"production session requires an authenticated context identity",
+			)
+		}
+		if authenticated.TenantID != a.opts.Principal.TenantID ||
+			authenticated.ActorID != a.opts.Principal.ActorID {
+			return nil, core.NewPermissionError(
+				"production session identity does not match the agent identity",
+			)
+		}
+		if principal.Authenticated() &&
+			(principal.TenantID != authenticated.TenantID ||
+				principal.ActorID != authenticated.ActorID) {
+			return nil, core.NewPermissionError(
+				"production session options cannot replace authenticated identity",
+			)
+		}
+		principal = authenticated
+	}
 	meta, ok := core.BindPrincipalToSessionMeta(opts.Meta, principal)
 	if !ok {
 		return nil, core.NewConfigError("session metadata conflicts with authenticated principal")
@@ -254,13 +333,13 @@ func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, err
 	if err != nil {
 		return nil, err
 	}
-	if !core.CanAccessSession(principal, rec.Meta) {
+	if !a.canAccessSession(principal, rec.Meta) {
 		return nil, core.NewPermissionError("session belongs to another tenant")
 	}
 	if loaded, ok, err := a.store.Load(ctx, rec.ID); err != nil {
 		return nil, err
 	} else if ok {
-		if !core.CanAccessSession(principal, loaded.Meta) {
+		if !a.canAccessSession(principal, loaded.Meta) {
 			return nil, core.NewPermissionError("session belongs to another tenant")
 		}
 		rec = loaded
@@ -274,6 +353,19 @@ func (a *Agent) Session(ctx context.Context, opts SessionOptions) (*Session, err
 		view = append(view, sm.Message)
 	}
 	return newSession(a, rec, view, nil, principal), nil
+}
+
+func (a *Agent) canAccessSession(
+	principal core.Principal,
+	meta map[string]interface{},
+) bool {
+	if a.production() == nil {
+		return core.CanAccessSession(principal, meta)
+	}
+	owner := core.PrincipalFromSessionMeta(meta)
+	return principal.Authenticated() && owner.Authenticated() &&
+		principal.TenantID == owner.TenantID &&
+		principal.ActorID == owner.ActorID
 }
 
 func (a *Agent) loadRuntime(ctx context.Context) ([]core.Event, error) {
@@ -391,6 +483,12 @@ func (a *Agent) connectMCP(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("connect mcp servers: %w", err)
 	}
+	if a.production() != nil && len(discovered) > 0 {
+		_ = a.mcp.Close()
+		return core.NewConfigError(
+			"production agent rejected dynamically discovered MCP tools",
+		)
+	}
 	for _, tool := range discovered {
 		if err := a.opts.Tools.Register(tool); err != nil {
 			_ = a.mcp.Close()
@@ -419,7 +517,14 @@ func (a *Agent) loadSkills() ([]core.Event, error) {
 		return nil, nil
 	}
 	if _, exists := a.opts.Tools.Get("Skill"); !exists {
-		if err := a.opts.Tools.Register(skills.Tool{Manager: a.skills}); err != nil {
+		tool := skills.Tool{Manager: a.skills}
+		if a.production() != nil {
+			if err := validateProductionAgentTool(tool); err != nil {
+				a.skillsMu.Unlock()
+				return nil, err
+			}
+		}
+		if err := a.opts.Tools.Register(tool); err != nil {
 			a.skillsMu.Unlock()
 			return nil, err
 		}

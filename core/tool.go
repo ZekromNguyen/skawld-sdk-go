@@ -14,18 +14,19 @@ type FileReadTracker interface {
 // retain only for the duration of Execute; tools should honor Context
 // cancellation and use Filesystem when resolving local paths.
 type ToolContext struct {
-	Context         context.Context
-	CWD             string
-	Filesystem      FilesystemResolver
-	FileReadTracker FileReadTracker
-	Observer        Observer
-	Principal       Principal
-	SessionID       string
-	RunID           string
-	SessionStore    SessionStore
-	Emit            func(Event)
-	InvokeSkill     func(context.Context, SkillInvocation) (ToolResult, error)
-	RunSubagent     func(context.Context, SubagentInvocation) (ToolResult, error)
+	Context               context.Context
+	CWD                   string
+	Filesystem            FilesystemResolver
+	FileReadTracker       FileReadTracker
+	Observer              Observer
+	Principal             Principal
+	SessionID             string
+	RunID                 string
+	SessionStore          SessionStore
+	StrictSessionIdentity bool
+	Emit                  func(Event)
+	InvokeSkill           func(context.Context, SkillInvocation) (ToolResult, error)
+	RunSubagent           func(context.Context, SubagentInvocation) (ToolResult, error)
 }
 
 // FilesystemResolveMode describes the kind of filesystem access a built-in

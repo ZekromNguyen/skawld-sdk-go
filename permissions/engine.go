@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
+	"github.com/ZekromNguyen/skawld-sdk-go/internal/jsoncopy"
 )
 
 type DecisionKind string
@@ -124,6 +125,19 @@ func (e *Engine) Resolve(ctx context.Context, call PendingCall) Decision {
 	if initial.Decision != DecisionAsk {
 		return initial
 	}
+	return e.ResolveApproval(ctx, call)
+}
+
+// ResolveApproval invokes the configured human/application approval callback
+// regardless of the current permission mode. Hard policy uses this path so a
+// yolo or allow rule cannot bypass a mandatory approval decision.
+func (e *Engine) ResolveApproval(
+	ctx context.Context,
+	call PendingCall,
+) Decision {
+	if reason := validatePendingCall(call); reason != "" {
+		return Decision{Decision: DecisionDeny, Reason: reason}
+	}
 	if e.opts.CanUseTool == nil {
 		return Decision{Decision: DecisionDeny, Reason: fmt.Sprintf("Permission denied for %s: canUseTool callback is not configured.", call.Tool.Name())}
 	}
@@ -144,7 +158,8 @@ func (e *Engine) Resolve(ctx context.Context, call PendingCall) Decision {
 		return invalidCallbackResponseDecision(call.Tool.Name())
 	}
 	if resp.UpdatedInput != nil {
-		validated, err := call.Tool.Validate(resp.UpdatedInput)
+		candidate := jsoncopy.Map(resp.UpdatedInput)
+		validated, err := call.Tool.Validate(jsoncopy.Map(candidate))
 		if err != nil {
 			return Decision{Decision: DecisionDeny, Reason: fmt.Sprintf("Permission denied for %s: updated input is invalid.", call.Tool.Name())}
 		}
@@ -161,8 +176,8 @@ func (e *Engine) callPermissionCallback(ctx context.Context, call PendingCall) (
 	resp, err := e.opts.CanUseTool(ctx, CanUseToolRequest{
 		ToolName:   call.Tool.Name(),
 		ToolUseID:  call.ToolUseID,
-		Input:      call.Input,
-		Summary:    call.Tool.Summarize(call.Input),
+		Input:      jsoncopy.Map(call.Input),
+		Summary:    call.Tool.Summarize(jsoncopy.Map(call.Input)),
 		Mode:       e.opts.Mode,
 		Principal:  call.Principal,
 		Descriptor: core.DescribeTool(call.Tool),

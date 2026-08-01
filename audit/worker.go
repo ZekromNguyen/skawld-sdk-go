@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ZekromNguyen/skawld-sdk-go/core"
@@ -61,6 +62,8 @@ type Worker struct {
 	maxAttempts   int
 	now           func() time.Time
 	onError       func(error)
+	healthMu      sync.RWMutex
+	health        WorkerHealth
 }
 
 type WorkerResult struct {
@@ -68,6 +71,31 @@ type WorkerResult struct {
 	Delivered    int
 	Failed       int
 	DeadLettered int
+}
+
+// WorkerHealth is a content-free operational snapshot suitable for readiness
+// endpoints. It intentionally omits delivery errors and event payloads.
+type WorkerHealth struct {
+	WorkerID            string
+	Ready               bool
+	LastAttemptAt       time.Time
+	LastSuccessAt       time.Time
+	ConsecutiveFailures int
+	LastResult          WorkerResult
+}
+
+// Healthy reports readiness only when the last successful poll is recent.
+// Applications should use this for readiness instead of treating a historical
+// Ready value as proof that the worker is still polling.
+func (h WorkerHealth) Healthy(
+	now time.Time,
+	maxStaleness time.Duration,
+) bool {
+	if !h.Ready || h.LastAttemptAt.IsZero() ||
+		maxStaleness <= 0 || now.Before(h.LastAttemptAt) {
+		return false
+	}
+	return now.Sub(h.LastAttemptAt) <= maxStaleness
 }
 
 func NewWorker(options WorkerOptions) (*Worker, error) {
@@ -133,8 +161,11 @@ func NewWorker(options WorkerOptions) (*Worker, error) {
 
 func (w *Worker) RunOnce(
 	ctx context.Context,
-) (WorkerResult, error) {
+) (result WorkerResult, runErr error) {
 	now := w.now()
+	defer func() {
+		w.recordHealth(now, result, runErr)
+	}()
 	deliveries, err := w.outbox.Claim(ctx, LeaseRequest{
 		WorkerID: w.workerID, Limit: w.batchSize,
 		LeaseDuration: w.leaseDuration, Now: now,
@@ -142,7 +173,7 @@ func (w *Worker) RunOnce(
 	if err != nil {
 		return WorkerResult{}, err
 	}
-	result := WorkerResult{Claimed: len(deliveries)}
+	result = WorkerResult{Claimed: len(deliveries)}
 	failures := make([]error, 0)
 	for _, delivery := range deliveries {
 		if err := ctx.Err(); err != nil {
@@ -182,6 +213,42 @@ func (w *Worker) RunOnce(
 		result.Delivered++
 	}
 	return result, errors.Join(failures...)
+}
+
+func (w *Worker) Health() WorkerHealth {
+	if w == nil {
+		return WorkerHealth{}
+	}
+	w.healthMu.RLock()
+	defer w.healthMu.RUnlock()
+	return w.health
+}
+
+func (w *Worker) recordHealth(
+	attemptedAt time.Time,
+	result WorkerResult,
+	err error,
+) {
+	w.healthMu.Lock()
+	defer w.healthMu.Unlock()
+	w.health.WorkerID = w.workerID
+	w.health.LastAttemptAt = attemptedAt
+	w.health.LastResult = result
+	if err != nil {
+		if errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
+			// A poll interrupted by shutdown is not an operational failure.
+			// Keep readiness and the failure streak unchanged so a graceful
+			// stop does not look like a broken worker to readiness endpoints.
+			return
+		}
+		w.health.Ready = false
+		w.health.ConsecutiveFailures++
+		return
+	}
+	w.health.Ready = true
+	w.health.LastSuccessAt = w.now()
+	w.health.ConsecutiveFailures = 0
 }
 
 // Run polls until cancellation. Delivery failures are reported to OnError and

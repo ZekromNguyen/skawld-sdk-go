@@ -87,6 +87,22 @@ type SessionStore interface {
 	Close() error
 }
 
+// DurableSessionStore marks stores whose records survive process restarts.
+// Production constructors require this explicit capability instead of
+// inferring durability from concrete implementation names.
+type DurableSessionStore interface {
+	SessionStore
+	Durable() bool
+}
+
+// ProtectedSessionStore marks durable stores that protect sensitive session
+// payloads at rest and enforce authenticated tenant/actor isolation on direct
+// store access. Production agents require both capabilities.
+type ProtectedSessionStore interface {
+	DurableSessionStore
+	Protected() bool
+}
+
 // LegacySessionStore is the pre-context store contract. AdaptLegacySessionStore
 // lets existing store implementations be used while migrating to SessionStore.
 type LegacySessionStore interface {
